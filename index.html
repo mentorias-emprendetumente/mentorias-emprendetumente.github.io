@@ -1483,6 +1483,12 @@ main{padding:16px 16px 40px}
 .warn{color:var(--red);font-size:13px;font-weight:600}
 .okmsg{color:var(--ok);font-size:13px;font-weight:600}
 .note{font-size:13px;color:var(--muted);line-height:1.4}
+.mdays{display:flex;flex-wrap:wrap;gap:4px;margin:-2px 0 6px}
+.dchip{font-size:11.5px;padding:2px 8px;border-radius:99px;background:var(--bg);color:#a9b3c4;font-variant-numeric:tabular-nums}
+.dchip.on{background:#e6ecf7;color:var(--navy);font-weight:600}
+.nmdays{display:flex;gap:14px;flex-wrap:wrap;font-size:15px}
+.nmdays label{display:flex;gap:6px;align-items:center}
+.nmdays input{width:20px;height:20px;accent-color:var(--navy)}
 /* métricas */
 .k-ok{--c:#2f6fd6}.k-no{--c:#e1251b}.k-ca{--c:#d99a00}
 .kx-src{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;font-size:14px;color:var(--muted)}
@@ -1678,7 +1684,7 @@ const S={
     ["Martín C.",2,"15:40","reservado",0],["Isidora M.",1,"16:00","reservado",0],["Antonia G.",2,"16:20","reservado",0],
     ["Benjamín A.",1,"16:40","reservado",0],["Florencia T.",2,"17:00","reservado",0]
   ].map(([name,mesa,t,status,calls])=>{const s=toMin(t);return {id:++uid,day:0,mesa,start:s,name,email:"",status,calls,startedAt:status==="enmesa"?s*60:null,endsAt:status==="enmesa"?(s+20)*60:null,endedAt:status==="finalizada"?(s+20)*60:null}}),
-  view:"tablet", kpiSrc:"ejemplo", hostTab:"reserva", pf:{day:"all",mesa:"all",q:"",all:false}, unlocked:false, pinTarget:"turnos", pinIn:"", pinErr:"", mt:1, mtDur:{1:20,2:20}, sure:null, banner:null,
+  view:"tablet", nm:{name:"",spec:"",days:[0],mesa:1,from:"10:00",to:"12:00",mode:"take",msg:"",ok:false}, kpiSrc:"ejemplo", hostTab:"reserva", pf:{day:"all",mesa:"all",q:"",all:false}, unlocked:false, pinTarget:"turnos", pinIn:"", pinErr:"", mt:1, mtDur:{1:20,2:20}, sure:null, banner:null,
   tab:{step:"pick",day:0,mesa:null,start:null,first:"",ini:"",email:"",ok:false,count:60}
 };
 [["Ignacio L.",1,1,"10:20"],["Paula S.",1,2,"10:40"],["Rodrigo N.",1,1,"11:40"],["Daniela F.",1,2,"15:20"],["Joaquín B.",1,1,"17:20"],["Catalina V.",2,2,"10:00"],["Felipe O.",2,1,"12:00"],["Javiera M.",2,2,"18:20"]].forEach(([name,day,mesa,t])=>S.bookings.push({id:++uid,day,mesa,start:toMin(t),name,email:"",status:"reservado",calls:0}));
@@ -2047,8 +2053,22 @@ function renderRecepcion(){
         </form>
       </div>
       <div class="pg-card"><h3>Mentores del evento</h3><p class="note">Se escriben una sola vez. Después solo se eligen en la parrilla.</p>
-        ${S.mentors.map(m=>`<div class="mrow"><input data-mm="${m.id}" data-f="name" value="${esc(m.name)}" aria-label="Nombre del mentor"><input data-mm="${m.id}" data-f="spec" value="${esc(m.spec)}" aria-label="Especialidad"><button type="button" class="del" data-delm="${m.id}" aria-label="Quitar mentor">✕</button></div>`).join("")}
-        <button type="button" class="add" id="addM">+ Agregar mentor</button>
+        ${S.mentors.map(m=>`<div class="mrow"><input data-mm="${m.id}" data-f="name" value="${esc(m.name)}" aria-label="Nombre del mentor"><input data-mm="${m.id}" data-f="spec" value="${esc(m.spec)}" aria-label="Especialidad"><button type="button" class="del" data-delm="${m.id}" aria-label="Quitar mentor">✕</button></div><div class="mdays">${[0,1,2].map(d=>{const bl=S.grid.filter(g=>g.mid===m.id&&g.day===d);return `<span class="dchip${bl.length?" on":""}" title="${bl.length?bl.map(b=>"Mesa "+b.mesa+" "+b.from+"–"+b.to).join(", "):"Sin bloques"}">${DAYS[d]}${bl.length?" · "+bl.map(b=>"M"+b.mesa+" "+b.from+"–"+b.to).join(", "):""}</span>`}).join("")}</div>`).join("")}
+      </div>
+      <div class="pg-card"><h3>Agregar mentor nuevo</h3>
+        <p class="note">Elige los días en que participa y su horario. Se crean sus bloques en la parrilla de cada día elegido.</p>
+        <form id="newMForm" style="display:grid;gap:8px">
+          <input id="nmName" placeholder="Nombre del mentor" value="${esc(S.nm.name)}" aria-label="Nombre del mentor nuevo" autocomplete="off">
+          <input id="nmSpec" placeholder="Especialidad" value="${esc(S.nm.spec)}" aria-label="Especialidad del mentor nuevo" autocomplete="off">
+          <div class="nmdays" role="group" aria-label="Días que participa">${[0,1,2].map(d=>`<label><input type="checkbox" class="nmDay" value="${d}" ${S.nm.days.includes(d)?"checked":""}> ${DAYS[d]}</label>`).join("")}</div>
+          <div class="brow" style="grid-template-columns:1fr 1fr 1fr"><select id="nmMesa" aria-label="Mesa"><option value="1"${S.nm.mesa===1?" selected":""}>Mesa 1</option><option value="2"${S.nm.mesa===2?" selected":""}>Mesa 2</option></select><select id="nmFrom" aria-label="Desde">${timeOpts(S.nm.from)}</select><select id="nmTo" aria-label="Hasta">${timeOpts(S.nm.to)}</select></div>
+          <div class="nmdays" role="radiogroup" aria-label="Si el horario ya tiene mentor" style="flex-direction:column;gap:6px;font-size:14px">
+            <label><input type="radio" name="nmMode" value="take" ${S.nm.mode==="take"?"checked":""}> Si el horario ya tiene mentor, el nuevo lo toma y se ajusta el bloque del otro</label>
+            <label><input type="radio" name="nmMode" value="skip" ${S.nm.mode==="skip"?"checked":""}> Si el horario ya tiene mentor, no agregarlo ese día</label>
+          </div>
+          <button type="submit" class="add" style="border-style:solid">+ Agregar mentor y sus bloques</button>
+          ${S.nm.msg?`<p class="${S.nm.ok?"okmsg":"warn"}" role="status">${S.nm.msg}</p>`:""}
+        </form>
       </div></div><div style="display:grid;gap:14px">`;
     for(const mesa of [1,2]){
       const bl=blocks(S.day,mesa);
@@ -2183,6 +2203,33 @@ document.querySelector(".seg").addEventListener("click",e=>{const b=e.target.clo
   else{S.hostTab="pin";S.pinTarget=t;S.pinIn="";S.pinErr=""}
   renderAll()});
 document.getElementById("tabSub").addEventListener("click",e=>{if(e.target.closest("#lockNow")){S.unlocked=false;S.hostTab="reserva";renderAll()}});
+tb.addEventListener("input",e=>{const t=e.target;if(t.id==="nmName")S.nm.name=t.value;if(t.id==="nmSpec")S.nm.spec=t.value});
+tb.addEventListener("change",e=>{const t=e.target;
+  if(t.classList&&t.classList.contains("nmDay")){S.nm.days=[...document.querySelectorAll(".nmDay:checked")].map(x=>+x.value)}
+  if(t.name==="nmMode")S.nm.mode=t.value;
+  if(t.id==="nmMesa")S.nm.mesa=+t.value;if(t.id==="nmFrom")S.nm.from=t.value;if(t.id==="nmTo")S.nm.to=t.value});
+tb.addEventListener("submit",e=>{if(e.target.id!=="newMForm")return;e.preventDefault();e.stopImmediatePropagation();
+  const N=S.nm,name=N.name.trim(),f=toMin(N.from),t=toMin(N.to);N.ok=false;
+  if(name.length<2)N.msg="Escribe el nombre del mentor.";
+  else if(!N.days.length)N.msg="Elige al menos un día.";
+  else if(t<=f)N.msg="La hora de término debe ser después de la de inicio.";
+  else{
+    const id=++uid;S.mentors.push({id,name,spec:N.spec.trim()||"Especialidad"});
+    const ok=[],bad=[],adj=[];
+    for(const d of N.days){const clashes=blocks(d,N.mesa).filter(b=>f<toMin(b.to)&&t>toMin(b.from));
+      if(clashes.length&&N.mode==="skip"){bad.push(DAYS[d]+" (se cruza con "+mentorById(clashes[0].mid).name+" "+clashes[0].from+"–"+clashes[0].to+")");continue}
+      /* el mentor nuevo toma el horario: se recorta, divide o quita el bloque del otro mentor */
+      for(const b of clashes){const bf=toMin(b.from),bt=toMin(b.to),who=mentorById(b.mid).name;
+        if(bf>=f&&bt<=t){S.grid=S.grid.filter(g=>g!==b);adj.push(DAYS[d]+": "+who+" sale de "+b.from+"–"+b.to)}
+        else if(bf<f&&bt>t){S.grid.push({id:++uid,day:d,mesa:b.mesa,mid:b.mid,from:N.to,to:b.to});b.to=N.from;adj.push(DAYS[d]+": "+who+" queda "+b.from+"–"+N.from+" y "+N.to+"–"+fmt(bt))}
+        else if(bf<f){b.to=N.from;adj.push(DAYS[d]+": "+who+" queda "+b.from+"–"+b.to)}
+        else{b.from=N.to;adj.push(DAYS[d]+": "+who+" queda "+b.from+"–"+b.to)}}
+      S.grid.push({id:++uid,day:d,mesa:N.mesa,mid:id,from:N.from,to:N.to});ok.push(DAYS[d])}
+    N.ok=ok.length>0;
+    N.msg=(ok.length?esc(name)+" agregado en Mesa "+N.mesa+", "+N.from+"–"+N.to+": "+ok.join(", ")+".":esc(name)+" quedó en la lista de mentores, sin bloques.")+(adj.length?" Ajustes: "+esc(adj.join("; "))+".":"")+(bad.length?" No se agregó en "+bad.join("; ")+". Ajusta la hora o la mesa en esos días.":"");
+    if(ok.length){N.name="";N.spec=""}
+  }
+  document.activeElement&&document.activeElement.blur();renderTablet()},true);
 tb.addEventListener("submit",e=>{if(e.target.id!=="pinForm")return;e.preventDefault();e.stopImmediatePropagation();
   const a=document.getElementById("pinNew").value.trim(),b=document.getElementById("pinNew2").value.trim();
   if(!/^\d{4}$/.test(a))S.pinMsg="El PIN debe tener 4 números.";
