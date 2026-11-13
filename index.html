@@ -1823,6 +1823,9 @@ body.saving,body.saving *{cursor:progress!important}
 @media (max-width:520px){.home-grid{grid-template-columns:1fr}}
 /* vista real: sin marcos, cada equipo a pantalla completa */
 .fullbtn{background:var(--red)!important;border-color:var(--red)!important;font-weight:700}
+.homebtn{display:inline-block;margin:0 0 6px;padding:3px 12px;border-radius:99px;border:1px solid rgba(255,255,255,.5);color:#fff;text-decoration:none;font-size:13px;font-weight:600;opacity:.85}
+.homebtn:hover,.homebtn:focus-visible{opacity:1;background:rgba(255,255,255,.15)}
+body:not(.live) .homebtn{display:none}
 .exitfull{display:none;position:fixed;bottom:10px;left:10px;z-index:50;border:none;border-radius:99px;padding:8px 14px;font-weight:700;font-size:13px;background:rgba(0,0,0,.55);color:#fff;opacity:.35}
 .exitfull:hover,.exitfull:focus-visible{opacity:1}
 body.full .exitfull{display:block}
@@ -1896,7 +1899,7 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
   <section class="view" id="v-tablet" aria-label="Tablet de la anfitriona">
     <div class="tablet"><div class="t-screen">
       <div class="t-head">
-        <div><h1 id="tabTitle">Reserva tu mentoría gratis</h1><p id="tabSub">Sesiones 1 a 1 con expertos Copec</p></div>
+        <div><a class="homebtn" href="#">← Inicio</a><h1 id="tabTitle">Reserva tu mentoría gratis</h1><p id="tabSub">Sesiones 1 a 1 con expertos Copec</p></div>
         <div class="seg" role="group" aria-label="Sección de la tablet">
           <button type="button" data-s="reserva">Nueva reserva</button>
           <button type="button" data-s="turnos">Recepción</button>
@@ -1912,7 +1915,7 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
   <section class="view" id="v-mentor" aria-label="Tablet del mentor">
     <div class="tablet"><div class="t-screen">
       <div class="t-head">
-        <div><h1 id="mtTitle">Mesa 1</h1><p id="mtSub"></p></div>
+        <div><a class="homebtn" href="#">← Inicio</a><h1 id="mtTitle">Mesa 1</h1><p id="mtSub"></p></div>
         <div class="days" role="group" aria-label="Tablet de mesa" style="margin:0">
           <button type="button" class="chip" data-mt="1">Mesa 1</button>
           <button type="button" class="chip" data-mt="2">Mesa 2</button>
