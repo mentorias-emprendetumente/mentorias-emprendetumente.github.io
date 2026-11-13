@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu mentoría · Emprende tu Mente</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<script src="config.js"></script>
+<style>
+:root{
+  /* Tarjeta de la cita en el celular del participante: azul corporativo, rojo de acento, una columna */
+  --navy:#0a2b5c;--red:#e1251b;--ink:#16223a;--muted:#5d6b84;--line:#d8dfeb;--bg:#eef2f8;--paper:#fff;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;--body:"Barlow","Segoe UI",Arial,sans-serif;color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body)}
+header{background:var(--navy);color:#fff;padding:20px 20px 16px;border-bottom:5px solid var(--red)}
+header h1{margin:0;font-family:var(--display);font-size:30px;text-wrap:balance}
+header p{margin:4px 0 0;color:#cdd8ec;font-size:15px}
+.logo-ph{display:inline-flex;border:2px dashed currentColor;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;opacity:.85;margin-bottom:10px}
+main{max-width:480px;margin:0 auto;padding:18px 16px 32px;display:grid;gap:14px}
+.card{background:var(--paper);border-radius:16px;padding:18px;border:1px solid var(--line);display:grid;gap:12px}
+.who{font-family:var(--display);font-size:28px;font-weight:700;color:var(--navy)}
+.row{display:grid;grid-template-columns:90px 1fr;gap:8px;font-size:16px;border-top:1px solid var(--line);padding-top:10px}
+.row span{color:var(--muted)}
+.row b{font-variant-numeric:tabular-nums}
+.btn{display:block;text-align:center;text-decoration:none;border-radius:12px;padding:16px;font-weight:700;font-size:17px}
+.btn.primary{background:var(--red);color:#fff}
+.btn.ghost{background:#fff;color:var(--navy);border:2px solid var(--navy)}
+.note{font-size:14px;color:var(--muted);line-height:1.45;margin:0}
+.warn{background:#fff6e6;border-left:5px solid #c77700;border-radius:8px;padding:12px;font-size:15px;line-height:1.4}
+:focus-visible{outline:3px solid var(--red);outline-offset:2px}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo-ph">LOGO COPEC</span>
+  <h1>Tu mentoría está reservada</h1>
+  <p>Feria Emprende tu Mente</p>
+</header>
+<main id="app"></main>
+<script>
+(function(){
+  "use strict";
+  var CFG=window.MENTORIAS_CONFIG||{};
+  var p={};(location.hash.slice(1)||"").split("&").forEach(function(kv){if(!kv)return;var i=kv.indexOf("=");p[decodeURIComponent(kv.slice(0,i))]=decodeURIComponent((kv.slice(i+1)||"").replace(/\+/g," "))});
+  function esc(s){return String(s||"").replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
+  var app=document.getElementById("app");
+  if(!p.h||!p.d){app.innerHTML='<div class="card"><p class="note">No encontramos los datos de la cita. Vuelve a escanear el código QR en la tablet del stand.</p></div>';return}
+  var dur=+p.dur||20, hm=p.h.split(":"), fin=(+hm[0])*60+(+hm[1])+dur;
+  var hFin=String(Math.floor(fin/60)).padStart(2,"0")+":"+String(fin%60).padStart(2,"0");
+  var fecha=new Date(p.d+"T12:00:00");
+  var fechaTxt=fecha.toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long"});
+  var ymd=p.d.replace(/-/g,""), t1=p.h.replace(":","")+"00", t2=hFin.replace(":","")+"00";
+  var titulo="Mentoría Copec con "+(p.m||"mentor")+" · Mesa "+p.mesa;
+  var lugar=p.u||"Stand Copec, feria Emprende tu Mente";
+  var gcal="https://calendar.google.com/calendar/render?"+new URLSearchParams({action:"TEMPLATE",text:titulo,dates:ymd+"T"+t1+"/"+ymd+"T"+t2,ctz:"America/Santiago",details:(p.t?"Tema: "+p.t+". ":"")+"Mentor: "+(p.m||"")+(p.s?" ("+p.s+")":"")+". Mesa "+p.mesa+". Llega 5 minutos antes.",location:lugar}).toString();
+  var ics=CFG.api&&p.id&&p.tk?CFG.api+"?action=ics&id="+encodeURIComponent(p.id)+"&tk="+encodeURIComponent(p.tk):"";
+  var ios=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+  var bIcs=ics?'<a class="btn primary" href="'+esc(ics)+'">Agregar a mi calendario (con avisos)</a>':"";
+  var bG='<a class="btn '+(ics?"ghost":"primary")+'" href="'+esc(gcal)+'" target="_blank" rel="noopener">Agregar a Google Calendar</a>';
+  app.innerHTML='<div class="card"><div class="who">'+esc(p.n||"Participante")+'</div>'+
+    (p.t?'<div class="row"><span>Tema</span><b>'+esc(p.t)+'</b></div>':"")+
+    '<div class="row"><span>Mentor</span><b>'+esc(p.m||"Por confirmar")+(p.s?'<br><span style="font-weight:500">'+esc(p.s)+'</span>':"")+'</b></div>'+
+    '<div class="row"><span>Día</span><b>'+esc(fechaTxt.charAt(0).toUpperCase()+fechaTxt.slice(1))+'</b></div>'+
+    '<div class="row"><span>Hora</span><b>'+esc(p.h)+' – '+esc(hFin)+'</b></div>'+
+    '<div class="row"><span>Mesa</span><b style="font-size:22px;color:var(--navy)">Mesa '+esc(p.mesa)+'</b></div>'+
+    '<div class="row"><span>Lugar</span><b>'+esc(lugar)+'</b></div></div>'+
+    bIcs+bG+
+    '<p class="note">'+(ics?"El botón principal agrega la cita a tu calendario con dos avisos: 15 y 5 minutos antes. En iPhone se abre directo en Calendario; en Android se abre con Google Calendar.":"En Google Calendar revisa que quede un aviso 15 y otro 5 minutos antes.")+'</p>'+
+    '<div class="warn">Si no llegas a tu hora, el mentor te llamará 3 veces en la pantalla del stand y luego el cupo se libera.</div>'+
+    '<p class="note">Tus datos se usan solo para esta mentoría y se eliminan al terminar la feria. Puedes guardar esta página como respaldo.</p>';
+})();
+</script>
+</body>
+</html>

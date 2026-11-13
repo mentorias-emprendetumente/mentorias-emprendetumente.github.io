@@ -1,0 +1,1 @@
+window.MENTORIAS_CONFIG={api:"https://script.google.com/macros/s/AKfycbz-GA0LZgygTertXU-XT2PTI4C6qfvzKlILX44JRsKEZMlUSxXUYZ7r_H8WlBKmzaWUKQ/exec",site:"https://mentorias-emprendetumente.github.io/"};
