@@ -1994,9 +1994,10 @@ const nowMin=()=>Math.floor(S.sec/60);
 const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion},mentors:S.mentors,grid:S.grid,bookings:S.bookings,seq:uid};
 let lastCallSeen=null,firstLoad=true;
 function adoptCall(lc,serverNow){
-  if(!lc||lc.at===lastCallSeen)return;
+  const key=lc?lc.at+"-"+lc.id+"-"+lc.calls:null;
+  if(!lc||key===lastCallSeen)return;
   const fresh=!firstLoad||((serverNow||Date.now())-lc.at)<12000;
-  lastCallSeen=lc.at;
+  lastCallSeen=key;
   if(fresh){S.banner={name:lc.name,mesa:lc.mesa,calls:lc.calls,until:Date.now()+12000};if(!LIVE||S.view==="pantalla")beep()}
 }
 function syncDemo(){
@@ -2058,7 +2059,12 @@ function bookable(day,t){if(day>S.day)return true;if(day<S.day)return false;retu
 function canFree(k){return S.sec-k.start*60>=GRACE*60&&k.calls>=MAXCALLS}
 function availableDays(){return S.allowOtherDays?[0,1,2].filter(d=>d>=S.day):[S.day]}
 const STLAB={reservado:"Reservado",presente:"En el stand",enmesa:"En mentoría",finalizada:"Terminada",liberado:"No llegó · cupo liberado",cancelada:"Cancelada por recepción"};
-function beep(){try{const C=new (window.AudioContext||window.webkitAudioContext)();[0,.22].forEach((d,i)=>{const o=C.createOscillator(),g=C.createGain();o.frequency.value=i?660:880;g.gain.setValueAtTime(.15,C.currentTime+d);g.gain.exponentialRampToValueAtTime(.001,C.currentTime+d+.2);o.connect(g).connect(C.destination);o.start(C.currentTime+d);o.stop(C.currentTime+d+.21)})}catch(e){}}
+let AC=null;
+function audioCtx(){try{if(!AC)AC=new (window.AudioContext||window.webkitAudioContext)();if(AC.state==="suspended")AC.resume();return AC}catch(e){return null}}
+function beep(){const C=audioCtx();if(!C)return;try{
+  /* aviso de 3 notas, claro y fuerte, para que se oiga en el stand */
+  [[784,0],[988,.26],[1319,.52]].forEach(([f,d])=>{const t=C.currentTime+d,o=C.createOscillator(),g=C.createGain();o.type="triangle";o.frequency.value=f;
+    g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.55,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+.45);o.connect(g).connect(C.destination);o.start(t);o.stop(t+.5)})}catch(e){}}
 function callPerson(k){k.calls++;S.banner={name:k.name,mesa:k.mesa,calls:k.calls,until:Date.now()+12000};beep()}
 const bannerOn=()=>!!(S.banner&&S.banner.until>Date.now());
 
@@ -2497,7 +2503,7 @@ setInterval(()=>{
   if(m!==lastMin||b!==lastBanner){lastMin=m;lastBanner=b;softRender()}else updateCounters();
 },1000);
 
-if(LIVE){document.body.classList.add("full","live");poll();setInterval(poll,3500)}else syncDemo();
+if(LIVE){document.body.classList.add("full","live");poll();setInterval(poll,3500);setInterval(()=>{if(S.view==="pantalla"&&!document.hidden)poll()},1500)}else syncDemo();
 if(DEMO){document.getElementById("clockLab").textContent="Modo presentación · hora simulada:";document.getElementById("clockLab").title="Fuera del horario de la feria el prototipo simula que son las 15:10. Entre 10:00 y 20:00 usa la hora real de Santiago."}
 function setFull(on){document.body.classList.toggle("full",on);try{if(on&&document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});if(!on&&document.fullscreenElement)document.exitFullscreen().catch(()=>{})}catch(e){}renderAll()}
 document.getElementById("goFull").addEventListener("click",()=>setFull(true));
@@ -2507,7 +2513,8 @@ document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement
 document.getElementById("simDay").innerHTML=DAYS.map((d,i)=>`<option value="${i}">${d}</option>`).join("");
 document.getElementById("simDay").addEventListener("change",e=>{S.day=+e.target.value;resetTablet()});
 window.addEventListener("hashchange",()=>{if(LIVE)location.reload();else route()});
-document.getElementById("tvScreen").addEventListener("click",e=>{if(e.target.closest("#soundGate")){S.soundOn=true;beep();renderTV()}});
+document.addEventListener("click",()=>{if(S.view==="pantalla")audioCtx()});
+document.getElementById("tvScreen").addEventListener("click",e=>{if(e.target.closest("#soundGate")){S.soundOn=true;audioCtx();beep();renderTV()}});
 
 /* tablet reservas */
 const tb=document.getElementById("tabletBody");
