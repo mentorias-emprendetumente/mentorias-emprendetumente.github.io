@@ -127,6 +127,9 @@ var MentoriasCore = (function () {
         return ok();
       },
       presente: function (p) { var k = find(p.id); if (!k || k.status !== "reservado") return fail("Esa reserva no está pendiente."); k.status = "presente"; return ok(); },
+      prodInfo: function () { return ok(); },
+      deleteBooking: function (p) { var i = -1; for (var j = 0; j < db.bookings.length; j++) if (db.bookings[j].id === +p.id) { i = j; break; } if (i < 0) return fail("Esa reserva ya no existe."); var k = db.bookings[i]; if (cfg.lastCall && cfg.lastCall.id === k.id) cfg.lastCall = null; db.bookings.splice(i, 1); return ok(); },
+      clearBookings: function () { db.bookings.length = 0; cfg.lastCall = null; return ok(); },
       cancel: function (p) { var k = find(p.id); if (!k || !waiting(k)) return fail("Esa reserva ya no se puede cancelar."); k.status = "cancelada"; return ok(); },
 
       setCfg: function (p) {
@@ -1702,7 +1705,7 @@ main{padding:16px 16px 40px}
 .acts button{flex:1 1 auto;border-radius:8px;padding:9px 10px;font-weight:700;font-size:14px;border:2px solid;white-space:nowrap}
 .a-ok{background:var(--ok);border-color:var(--ok);color:#fff}
 .a-no{background:#fff;border-color:var(--red);color:var(--red)}
-.a-no.sure{background:var(--red);color:#fff}
+.a-no.sure,.add.sure{background:var(--red);color:#fff}
 .sec-t{font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin:14px 2px 8px}
 .sec-t:first-child{margin-top:0}
 
@@ -1823,9 +1826,18 @@ body.saving,body.saving *{cursor:progress!important}
 @media (max-width:520px){.home-grid{grid-template-columns:1fr}}
 /* vista real: sin marcos, cada equipo a pantalla completa */
 .fullbtn{background:var(--red)!important;border-color:var(--red)!important;font-weight:700}
+.prod-eq{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.prod-eq div{border-radius:12px;padding:12px;background:#fff;border:1px solid var(--line,#d6dde9);color:var(--navy)}
+.prod-eq b{display:block;font-size:16px}.prod-eq span{font-size:13px}
+.prod-eq .on{border-color:#1f8f4e;background:#e8f6ee}.prod-eq .mid{border-color:#c9921a;background:#fdf3dc}.prod-eq .off{border-color:var(--red);background:#fde9e7}
+.prod-mesas{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:14px}
+.prod-mesas .pg-card .big{font-size:22px;font-weight:800}
+.prod-log{max-height:300px;overflow:auto;font-size:14px}.prod-log div{padding:6px 0;border-bottom:1px solid #e3e8f1}.prod-log time{color:var(--muted);margin-right:8px}
+.prod-links{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.prod-links a{padding:8px 14px;border-radius:99px;background:#fff;color:var(--navy);text-decoration:none;font-weight:700;border:1px solid #c5cfe2}
 .homebtn{display:inline-block;margin:0 0 6px;padding:3px 12px;border-radius:99px;border:1px solid rgba(255,255,255,.5);color:#fff;text-decoration:none;font-size:13px;font-weight:600;opacity:.85}
 .homebtn:hover,.homebtn:focus-visible{opacity:1;background:rgba(255,255,255,.15)}
 body:not(.live) .homebtn{display:none}
+body:not(.live) .prodlink{display:none}
 .exitfull{display:none;position:fixed;bottom:10px;left:10px;z-index:50;border:none;border-radius:99px;padding:8px 14px;font-weight:700;font-size:13px;background:rgba(0,0,0,.55);color:#fff;opacity:.35}
 .exitfull:hover,.exitfull:focus-visible{opacity:1}
 body.full .exitfull{display:block}
@@ -1893,6 +1905,7 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
         <a href="#pantalla">Visor<small>Turnos y llamados para el público</small></a>
         <a href="#mentor-1">Tablet Mesa 1<small>Para el mentor de la mesa 1</small></a>
         <a href="#mentor-2">Tablet Mesa 2<small>Para el mentor de la mesa 2</small></a>
+        <a href="#produccion" class="prodlink">Producción<small>Control y vista de todo el sistema (pide PIN)</small></a>
       </div>
     </div></div>
   </section>
@@ -1922,6 +1935,15 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
         </div>
       </div>
       <div class="t-body" id="mentorBody"></div>
+    </div></div>
+  </section>
+
+  <section class="view" id="v-produccion" aria-label="Producción">
+    <div class="tablet"><div class="t-screen">
+      <div class="t-head">
+        <div><a class="homebtn" href="#">← Inicio</a><h1>Producción · control en vivo</h1><p id="prodSub">Estado de anfitriona, mesas y visor</p></div>
+      </div>
+      <div class="t-body" id="prodBody"></div>
     </div></div>
   </section>
 
@@ -2007,19 +2029,20 @@ function syncDemo(){
 function applyState(pub){
   S.mentors=pub.mentors;S.grid=pub.grid;S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
   S.dur=pub.cfg.dur;S.allowOtherDays=pub.cfg.allowOtherDays;S.mtDur=pub.cfg.mtDur;S.fechas=pub.cfg.fechas||["","",""];applyDayLabels();S.ensayo=pub.cfg.ensayo||"";S.ubicacion=pub.cfg.ubicacion||S.ubicacion;
-  S.day=pub.now.day;S.label=pub.now.label||"";S.today=pub.now.today||"";
+  S.lastCall=pub.cfg.lastCall||null;S.day=pub.now.day;S.label=pub.now.label||"";S.today=pub.now.today||"";
   SRV.sec=pub.now.sec;SRV.at=performance.now();SRV.frozen=!!pub.now.frozen;S.sec=santiagoSec();
   adoptCall(pub.cfg.lastCall,pub.now.nowMs);firstLoad=false;S.loaded=true;
   const mb=document.getElementById("modeBadge");if(mb){mb.textContent=S.label;mb.classList.toggle("on",!!S.label&&S.view!=="pantalla")}
 }
 function toast(msg){if(!msg)return;let t=document.getElementById("toast");if(!t){t=document.createElement("div");t.id="toast";t.className="toast";t.setAttribute("role","status");document.body.appendChild(t)}t.textContent=msg;t.style.display="block";clearTimeout(t._h);t._h=setTimeout(()=>{t.style.display="none"},4500)}
 function authFailed(){S.pinValue=null;S.unlocked=false;try{localStorage.removeItem("mentorias_pin")}catch(e){}toast("El PIN cambió. Ingrésalo de nuevo.");if(S.view==="tablet"){S.hostTab="reserva"}renderAll()}
+function roleNow(){return S.view==="tablet"?"anfitriona":S.view==="mentor"?"mesa"+S.mt:S.view==="pantalla"?"visor":S.view==="produccion"?"produccion":""}
 async function act(action,payload,pinOverride){
   const pin=pinOverride!=null?pinOverride:S.pinValue;
   if(!LIVE){const r=MentoriasCore.run(db,{day:S.day,sec:S.sec,nowMs:Date.now()},action,payload,pin);syncDemo();return r}
   S.pending=true;document.body.classList.add("saving");
   try{
-    const res=await fetch(CFG.api,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:action,payload:payload||{},pin:pin})});
+    const res=await fetch(CFG.api,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:action,payload:payload||{},pin:pin,role:roleNow()})});
     const r=await res.json();if(r.state)applyState(r.state);setOnline(true);
     if(r.auth===false&&action!=="checkPin")authFailed();
     return r;
@@ -2028,7 +2051,7 @@ async function act(action,payload,pinOverride){
 }
 function setOnline(on){const b=document.getElementById("netBadge");if(b)b.classList.toggle("on",!on)}
 async function poll(){
-  try{const r=await fetch(CFG.api+"?action=state&t="+Date.now(),{cache:"no-store"});const pub=await r.json();if(!S.pending){applyState(pub);softRender()}setOnline(true)}
+  try{const r=await fetch(CFG.api+"?action=state&role="+roleNow()+"&t="+Date.now(),{cache:"no-store"});const pub=await r.json();if(!S.pending){applyState(pub);softRender()}setOnline(true)}
   catch(e){setOnline(false)}
 }
 function dateForDay(d){const f=(S.fechas||[])[d];if(f)return f;const base=S.today?new Date(S.today+"T12:00:00"):new Date();base.setDate(base.getDate()+(d-S.day));return base.getFullYear()+"-"+String(base.getMonth()+1).padStart(2,"0")+"-"+String(base.getDate()).padStart(2,"0")}
@@ -2380,18 +2403,25 @@ function renderRecepcion(){
     <div class="pl-wrap" id="planoRows">${planoRows()}</div>
     <p class="note" style="margin-top:10px">${LIVE?"Este plano es la pestaña Reservas de la planilla de Google Sheets: se puede descargar o imprimir desde ahí.":"En la versión real este plano es la misma planilla de Google Sheets: se puede descargar o imprimir al final de cada día."}</p>`;
   } else if(S.hostTab==="turnos"){
-    const list=S.bookings.filter(b=>b.day===S.day).sort((a,b)=>a.start-b.start||a.mesa-b.mesa);
-    const isUp=b=>(b.start+S.dur)*60>S.sec&&b.status!=="finalizada"&&ACTIVE(b);
-    const up=list.filter(isUp),past=list.filter(b=>!isUp(b));
+    const srt=(a,b)=>a.start-b.start||a.mesa-b.mesa;
+    const isUp=b=>b.day===S.day&&(b.start+S.dur)*60>S.sec&&b.status!=="finalizada"&&ACTIVE(b);
+    const delBtn=b=>`<button type="button" class="a-no${S.sureDel===b.id?" sure":""}" data-ra="del" data-id="${b.id}">${S.sureDel===b.id?"Toca otra vez para borrar":"🗑 Borrar"}</button>`;
     const card=b=>{const m=mentorAt(b.day,b.mesa,b.start);const end=b.endsAt||(b.start+S.dur)*60;
+      const today=b.day===S.day;
       let acts="";
-      const firstWaiting=upcoming(b.day,b.mesa,null)[0];
-      const callBtn=WAITING(b)&&(b.start*60-S.sec<=GRACE*60||(!activeSession(b.day,b.mesa)&&firstWaiting&&firstWaiting.id===b.id))?`<button type="button" class="a-no" data-ra="call" data-id="${b.id}">📣 Llamar</button>`:"";
-      if(b.status==="reservado")acts=`<div class="acts">${callBtn}<button type="button" class="a-ok" data-ra="presente" data-id="${b.id}">Llegó al stand</button><button type="button" class="a-no${S.sure===b.id?" sure":""}" data-ra="cancel" data-id="${b.id}">${S.sure===b.id?"Toca otra vez para cancelar":"Cancelar"}</button></div>`;
-      else if(b.status==="presente")acts=`<div class="acts">${callBtn}<button type="button" class="a-no${S.sure===b.id?" sure":""}" data-ra="cancel" data-id="${b.id}">${S.sure===b.id?"Toca otra vez para cancelar":"Cancelar"}</button></div>`;
-      return `<div class="card bk"><div class="t tnum">${fmt(b.start)}</div><div><div class="n">${esc(b.name)}</div><div class="m">Mesa ${b.mesa} · ${esc(m?m.name:"")}${b.calls?" · "+b.calls+" llamado(s)":""}${b.email?" · con correo":""}</div><span class="st ${b.status}">${STLAB[b.status]}</span>${b.status==="enmesa"?`<span class="cdl tnum" data-end="${end}">${mmss(end-S.sec)}</span>`:""}${acts}</div></div>`};
-    h+=`<div class="sec-t">Próximos y en curso (${up.length})</div><div class="rc-list">${up.map(card).join("")||`<p class="note">No hay reservas próximas.</p>`}</div>`;
-    if(past.length)h+=`<div class="sec-t">Anteriores</div><div class="rc-list">${past.map(card).join("")}</div>`;
+      const firstWaiting=today?upcoming(b.day,b.mesa,null)[0]:null;
+      const callBtn=today&&WAITING(b)&&(b.start*60-S.sec<=GRACE*60||(!activeSession(b.day,b.mesa)&&firstWaiting&&firstWaiting.id===b.id))?`<button type="button" class="a-no" data-ra="call" data-id="${b.id}">📣 Llamar</button>`:"";
+      const canBtn=`<button type="button" class="a-no${S.sure===b.id?" sure":""}" data-ra="cancel" data-id="${b.id}">${S.sure===b.id?"Toca otra vez para cancelar":"Cancelar"}</button>`;
+      if(b.status==="reservado")acts=`<div class="acts">${callBtn}${today?`<button type="button" class="a-ok" data-ra="presente" data-id="${b.id}">Llegó al stand</button>`:""}${canBtn}${delBtn(b)}</div>`;
+      else if(b.status==="presente")acts=`<div class="acts">${callBtn}${canBtn}${delBtn(b)}</div>`;
+      else if(b.status!=="enmesa")acts=`<div class="acts">${delBtn(b)}</div>`;
+      return `<div class="card bk"><div class="t tnum">${fmt(b.start)}</div><div><div class="n">${esc(b.name)}</div><div class="m">${esc(DAYS[b.day])} · Mesa ${b.mesa} · ${esc(m?m.name:"")}${b.calls?" · "+b.calls+" llamado(s)":""}${b.email?" · con correo":""}</div><span class="st ${b.status}">${STLAB[b.status]}</span>${b.status==="enmesa"?`<span class="cdl tnum" data-end="${end}">${mmss(end-S.sec)}</span>`:""}${acts}</div></div>`};
+    const todayL=S.bookings.filter(b=>b.day===S.day).sort(srt);
+    const up=todayL.filter(isUp),past=todayL.filter(b=>!isUp(b));
+    h+=`<div class="sec-t">${esc(DAYS[S.day])} (hoy) · próximos y en curso (${up.length})</div><div class="rc-list">${up.map(card).join("")||`<p class="note">No hay reservas próximas hoy.</p>`}</div>`;
+    if(past.length)h+=`<div class="sec-t">${esc(DAYS[S.day])} · anteriores</div><div class="rc-list">${past.map(card).join("")}</div>`;
+    for(const d of [0,1,2]){if(d===S.day)continue;const l=S.bookings.filter(b=>b.day===d).sort(srt);
+      h+=`<div class="sec-t">${esc(DAYS[d])} · ${l.length} reserva(s)</div><div class="rc-list">${l.map(card).join("")||`<p class="note">Sin reservas.</p>`}</div>`}
   } else {
     h+=`<div class="pg"><div style="display:grid;gap:14px">
       <div class="pg-card"><h3>Ajustes</h3>
@@ -2403,6 +2433,10 @@ function renderRecepcion(){
         <div class="setting"><label for="ensayoSel">Modo ensayo</label><select id="ensayoSel" style="width:auto"><option value=""${!S.ensayo?" selected":""}>Apagado</option>${[1,2,3].map(i=>`<option value="${i}"${S.ensayo==String(i)?" selected":""}>Simular Día ${i}</option>`).join("")}</select></div>
         <input id="ubicacionIn" value="${esc(S.ubicacion||"")}" placeholder="Ubicación del stand" aria-label="Ubicación del stand">
         <p class="note">El sistema usa estas fechas para saber qué día de la feria es. El modo ensayo sirve para probar antes del evento: apágalo el día de la feria.</p>
+      </div>
+      <div class="pg-card"><h3>Borrar todas las reservas</h3>
+        <p class="note">Elimina todas las reservas (de los 3 días) y deja las métricas en cero. Úsalo después de las pruebas, antes de la feria. No se puede deshacer.</p>
+        <button type="button" class="add${S.sureClear?" sure":""}" id="clearAll" style="border-style:solid">${S.sureClear?"Toca otra vez para borrar TODO":"🗑 Borrar todas las reservas"}</button>
       </div>
       <div class="pg-card"><h3>PIN de la anfitriona</h3>
         <p class="note">Protege Recepción, Parrilla, Plano general y Métricas. Cámbialo al inicio de cada día.</p>
@@ -2471,7 +2505,7 @@ function renderAll(){
   if(!LIVE)document.getElementById("hint").textContent=(DEMO?"Modo presentación: fuera del horario de la feria, el prototipo simula que son las 15:10 y el reloj avanza solo. ":"")+HINTS[S.view==="tablet"?(S.hostTab==="reserva"?"tablet":S.hostTab):S.view];
   updateClock();
   if(S.view==="home")return;
-  ({tablet:renderTablet,mentor:renderMentor,pantalla:renderTV})[S.view]();
+  ({tablet:renderTablet,mentor:renderMentor,pantalla:renderTV,produccion:renderProd})[S.view]();
 }
 function updateClock(){const s=S.sec;document.getElementById("simClock").textContent=fmt(Math.floor(s/60))+":"+String(s%60).padStart(2,"0")}
 function updateCounters(){
@@ -2489,9 +2523,57 @@ function route(){
     if(v==="anfitriona"||v==="tablet")S.view="tablet";
     else if(v==="mentor-1"||v==="mentor-2"){S.view="mentor";S.mt=+v.slice(-1);if(!S.pinValue){try{S.pinValue=localStorage.getItem("mentorias_pin")}catch(e){}}}
     else if(v==="pantalla")S.view="pantalla";
+    else if(v==="produccion"){S.view="produccion";if(!S.pinValue){try{S.pinValue=localStorage.getItem("mentorias_pin")}catch(e){}}S.prodOk=false;S.prod=null;S.prodErr="";prodFetch()}
     else S.view="home";
     S.sure=null;renderAll();return}
   let v=(location.hash||"#tablet").slice(1);if(v==="recepcion"){v="tablet";S.hostTab=S.unlocked?"turnos":"pin";S.pinTarget="turnos"}S.view=["tablet","mentor","pantalla"].includes(v)?v:"tablet";S.sure=null;renderAll()}
+
+/* ---------- Producción ---------- */
+const ROLNOM={anfitriona:"Anfitriona",mesa1:"Mesa 1 (mentor)",mesa2:"Mesa 2 (mentor)",visor:"Visor",produccion:"Producción"};
+async function prodFetch(pin){
+  if(!LIVE||S.prodBusy)return;const p=pin||S.pinValue;if(!p)return;S.prodBusy=true;
+  try{const res=await fetch(CFG.api,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"prodInfo",payload:{},pin:p,role:"produccion"})});
+    const r=await res.json();if(r.state)applyState(r.state);setOnline(true);
+    if(r.ok){S.pinValue=p;try{localStorage.setItem("mentorias_pin",p)}catch(e){}S.prodOk=true;S.prod=r.data;S.prodErr=""}
+    else{S.prodOk=false;S.prodErr=r.auth===false?"PIN incorrecto.":r.msg}
+  }catch(e){setOnline(false);S.prodErr="Sin conexión con el sistema."}
+  finally{S.prodBusy=false}
+  if(S.view==="produccion"&&!busy())renderProd();
+}
+const hhmmss=ms=>new Date(ms).toLocaleTimeString("es-CL",{timeZone:"America/Santiago",hour12:false});
+function renderProd(){
+  const el=document.getElementById("prodBody");if(!el)return;
+  if(!S.prodOk){
+    el.innerHTML=`<div class="pg-card" style="max-width:420px;margin:30px auto"><h3>Acceso de producción</h3><p class="note">Escribe el PIN para ver y controlar todo el sistema.</p>
+      <form id="prodForm" style="display:grid;gap:8px"><input id="prodPin" type="password" inputmode="numeric" maxlength="4" placeholder="PIN" autocomplete="off" aria-label="PIN"><button type="submit" class="add" style="border-style:solid">Entrar</button><span class="warn" role="status">${esc(S.prodErr||"")}</span></form></div>`;
+    document.getElementById("prodSub").textContent="Acceso con PIN";return}
+  const D=S.prod||{hb:{},log:[],srvMs:Date.now()};
+  document.getElementById("prodSub").textContent=DAYS[S.day]+" · "+fmt(nowMin())+" hrs"+(S.label?" · "+S.label:"");
+  const eq=["anfitriona","mesa1","mesa2","visor"].map(r=>{const t=D.hb[r],age=t?Math.max(0,(D.srvMs-t)/1000):null;
+    const cl=age===null?"off":age<15?"on":age<60?"mid":"off";const tx=age===null?"Sin señal desde que se abrió el sistema":age<15?"En línea":age<60?"Señal débil · hace "+Math.round(age)+" s":"Sin señal · hace "+(age<3600?Math.round(age/60)+" min":"más de 1 h");
+    return `<div class="${cl}"><b>${ROLNOM[r]}</b><span>${tx}</span></div>`}).join("");
+  let h=`<div class="prod-eq">${eq}</div><div class="prod-links"><a href="#anfitriona" target="_blank" rel="noopener">Abrir anfitriona</a><a href="#mentor-1" target="_blank" rel="noopener">Abrir Mesa 1</a><a href="#mentor-2" target="_blank" rel="noopener">Abrir Mesa 2</a><a href="#pantalla" target="_blank" rel="noopener">Abrir visor</a></div><div class="prod-mesas">`;
+  for(const mesa of [1,2]){
+    const cs=curSlot(S.day,mesa),act=activeSession(S.day,mesa),m=mentorAt(S.day,mesa,cs!==null?cs:nowMin());
+    const wait=S.bookings.filter(b=>b.day===S.day&&b.mesa===mesa&&WAITING(b)&&(b.start+S.dur)*60>S.sec).sort((a,b)=>a.start-b.start);
+    h+=`<div class="pg-card"><h3>Mesa ${mesa}${m?" · "+esc(m.name):""}</h3><p class="note">${m?esc(m.spec)+" · "+esc(m.tema||""):"Sin mentor en este horario"}</p>`;
+    if(act){const left=act.endsAt-S.sec;h+=`<div class="big">${esc(act.name)}</div><p>En mentoría · quedan <b class="tnum" data-end="${act.endsAt}">${mmss(left)}</b></p><button type="button" class="a-no" data-pa="finish" data-id="${act.id}">Terminar sesión</button>`}
+    else h+=`<p class="big" style="color:var(--muted)">Mesa libre</p>`;
+    h+=`<div class="sec-t">En espera (${wait.length})</div>`+(wait.length?wait.slice(0,4).map(b=>`<div class="m" style="margin:6px 0">${fmt(b.start)} · <b>${esc(b.name)}</b> · ${STLAB[b.status]}${b.calls?" · "+b.calls+" llamado(s)":""} <button type="button" class="a-no" data-pa="call" data-id="${b.id}">📣 Llamar</button>${!act?` <button type="button" class="a-ok" data-pa="start" data-id="${b.id}">Iniciar</button>`:""}</div>`).join(""):`<p class="note">Nadie esperando.</p>`)+`</div>`}
+  h+=`</div>`;
+  const lc=S.lastCall||null;
+  h+=`<div class="pg-card"><h3>Visor</h3><p class="note">${lc?`Último llamado: <b>${esc(lc.name)}</b> a la Mesa ${lc.mesa} · ${lc.calls} llamado(s) · ${hhmmss(lc.at)}`:"Todavía no hay llamados."}</p></div>`;
+  const cnt={};S.bookings.filter(b=>b.day===S.day).forEach(b=>cnt[b.status]=(cnt[b.status]||0)+1);
+  h+=`<div class="pg-card" style="margin-top:12px"><h3>Hoy (${esc(DAYS[S.day])})</h3><p class="note">${Object.keys(cnt).map(k=>cnt[k]+" "+STLAB[k].toLowerCase()).join(" · ")||"Sin reservas hoy."}</p></div>
+    <div class="pg-card" style="margin-top:12px"><h3>Bitácora · lo último que hicieron los equipos</h3><div class="prod-log">${D.log.length?D.log.map(l=>`<div><time>${hhmmss(l.t)}</time><b>${esc(ROLNOM[l.r]||"Sistema")}</b> · ${esc(l.x)}</div>`).join(""):`<p class="note">Aún no hay movimientos.</p>`}</div></div>
+    <div class="sec-t" style="margin-top:14px">Métricas</div>${renderKPI()}`;
+  el.innerHTML=h;
+}
+document.getElementById("prodBody").addEventListener("submit",e=>{if(e.target.id!=="prodForm")return;e.preventDefault();prodFetch(document.getElementById("prodPin").value.trim())});
+document.getElementById("prodBody").addEventListener("click",async e=>{const a=e.target.closest("[data-pa]");if(!a||S.pending)return;
+  if(a.dataset.pa==="call"&&LIVE)beep();
+  const r=await act(a.dataset.pa,{id:+a.dataset.id});if(!r.ok)toast(r.msg);prodFetch();renderProd()});
+setInterval(()=>{if(LIVE&&S.view==="produccion"&&S.prodOk&&!document.hidden)prodFetch()},3500);
 
 /* reloj de la demo: avanza solo */
 let lastMin=nowMin(),lastBanner=false;
@@ -2631,10 +2713,14 @@ async function staff(action,payload,okMsg){if(S.pending)return null;const r=awai
 rb.addEventListener("click",e=>{
   const a=e.target.closest("[data-ra]");
   if(a){const id=+a.dataset.id;
+    if(a.dataset.ra==="del"){S.sure=null;if(S.sureDel===id){S.sureDel=null;staff("deleteBooking",{id},"Reserva borrada")}else{S.sureDel=id;renderRecepcion()}return}
+    S.sureDel=null;
     if(a.dataset.ra==="presente"){S.sure=null;staff("presente",{id})}
     if(a.dataset.ra==="call"){S.sure=null;if(LIVE)beep();staff("call",{id}).then(()=>{lastBanner=bannerOn()})}
     if(a.dataset.ra==="cancel"){if(S.sure===id){S.sure=null;staff("cancel",{id})}else{S.sure=id;renderRecepcion()}}
     return}
+  if(e.target.closest("#clearAll")){if(S.sureClear){S.sureClear=false;staff("clearBookings",{},"Todas las reservas fueron borradas")}else{S.sureClear=true;renderRecepcion()}return}
+  if(S.sureClear){S.sureClear=false}
   if(e.target.closest("#swDays")){staff("setCfg",{key:"allowOtherDays",value:!S.allowOtherDays});return}
   const dg=e.target.closest("[data-delg]");if(dg){staff("gridDel",{id:+dg.dataset.delg});return}
   const dm=e.target.closest("[data-delm]");if(dm){staff("mentorDel",{id:+dm.dataset.delm});return}
