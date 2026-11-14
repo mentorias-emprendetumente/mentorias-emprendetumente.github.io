@@ -1818,7 +1818,14 @@ body.saving,body.saving *{cursor:progress!important}
 .home-card h1{font-family:var(--display);font-size:36px}
 .home-card p{color:#cdd8ec;margin:0;line-height:1.5}
 .home-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.home-grid a{display:block;background:#fff;color:var(--navy);text-decoration:none;border-radius:14px;padding:18px;font-weight:700;font-size:18px}
+.home-grid{gap:14px}
+.home-grid a{display:flex;flex-direction:column;justify-content:center;min-height:96px;background:#fff;color:var(--navy);text-decoration:none;border-radius:14px;padding:18px 20px;font-weight:700;font-size:19px;box-shadow:0 2px 0 rgba(0,0,0,.18);transition:transform .12s}
+.home-grid a:hover,.home-grid a:focus-visible{transform:translateY(-2px)}
+.home-grid a.prodlink{grid-column:1/-1;min-height:78px;background:transparent;color:#fff;border:2px solid rgba(255,255,255,.55);box-shadow:none;align-items:center;text-align:center}
+.home-grid a.prodlink small{color:#cdd8ec}
+.prodback{display:none;position:fixed;left:12px;bottom:12px;z-index:60;padding:9px 16px;border-radius:99px;background:var(--red);color:#fff;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 3px 10px rgba(0,0,0,.35)}
+body.fromprod .prodback{display:inline-block}
+body.fromprod.pantalla-on .prodback{opacity:.55}
 .home-grid a small{display:block;font-weight:500;font-size:13px;color:var(--muted);margin-top:4px}
 .soundgate{position:absolute;inset:0;background:rgba(6,26,58,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1cqw;cursor:pointer;z-index:5}
 .soundgate b{font-size:3.4cqw}
@@ -1894,6 +1901,7 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
 <div class="netbadge" id="netBadge" role="status">Sin conexión · reintentando…</div>
 <div class="modebadge" id="modeBadge" role="status"></div>
 
+<a class="prodback" href="#produccion">← Volver a Producción</a>
 <main>
   <section class="view" id="v-home" aria-label="Elegir equipo">
     <div class="home"><div class="home-card">
@@ -2520,6 +2528,7 @@ function softRender(){
 }
 function route(){
   if(LIVE){const v=(location.hash||"").slice(1);
+    try{if(v==="produccion"||v==="")sessionStorage.removeItem("fromProd");document.body.classList.toggle("fromprod",sessionStorage.getItem("fromProd")==="1"&&v!=="produccion"&&v!=="")}catch(e){}
     if(v==="anfitriona"||v==="tablet")S.view="tablet";
     else if(v==="mentor-1"||v==="mentor-2"){S.view="mentor";S.mt=+v.slice(-1);if(!S.pinValue){try{S.pinValue=localStorage.getItem("mentorias_pin")}catch(e){}}}
     else if(v==="pantalla")S.view="pantalla";
@@ -2552,7 +2561,7 @@ function renderProd(){
   const eq=["anfitriona","mesa1","mesa2","visor"].map(r=>{const t=D.hb[r],age=t?Math.max(0,(D.srvMs-t)/1000):null;
     const cl=age===null?"off":age<15?"on":age<60?"mid":"off";const tx=age===null?"Sin señal desde que se abrió el sistema":age<15?"En línea":age<60?"Señal débil · hace "+Math.round(age)+" s":"Sin señal · hace "+(age<3600?Math.round(age/60)+" min":"más de 1 h");
     return `<div class="${cl}"><b>${ROLNOM[r]}</b><span>${tx}</span></div>`}).join("");
-  let h=`<div class="prod-eq">${eq}</div><div class="prod-links"><a href="#anfitriona" target="_blank" rel="noopener">Abrir anfitriona</a><a href="#mentor-1" target="_blank" rel="noopener">Abrir Mesa 1</a><a href="#mentor-2" target="_blank" rel="noopener">Abrir Mesa 2</a><a href="#pantalla" target="_blank" rel="noopener">Abrir visor</a></div><div class="prod-mesas">`;
+  let h=`<div class="prod-eq">${eq}</div><div class="prod-links"><a href="#anfitriona" data-fp="1">Abrir anfitriona</a><a href="#mentor-1" data-fp="1">Abrir Mesa 1</a><a href="#mentor-2" data-fp="1">Abrir Mesa 2</a><a href="#pantalla" data-fp="1">Abrir visor</a></div><div class="prod-mesas">`;
   for(const mesa of [1,2]){
     const cs=curSlot(S.day,mesa),act=activeSession(S.day,mesa),m=mentorAt(S.day,mesa,cs!==null?cs:nowMin());
     const wait=S.bookings.filter(b=>b.day===S.day&&b.mesa===mesa&&WAITING(b)&&(b.start+S.dur)*60>S.sec).sort((a,b)=>a.start-b.start);
@@ -2566,11 +2575,16 @@ function renderProd(){
   const cnt={};S.bookings.filter(b=>b.day===S.day).forEach(b=>cnt[b.status]=(cnt[b.status]||0)+1);
   h+=`<div class="pg-card" style="margin-top:12px"><h3>Hoy (${esc(DAYS[S.day])})</h3><p class="note">${Object.keys(cnt).map(k=>cnt[k]+" "+STLAB[k].toLowerCase()).join(" · ")||"Sin reservas hoy."}</p></div>
     <div class="pg-card" style="margin-top:12px"><h3>Bitácora · lo último que hicieron los equipos</h3><div class="prod-log">${D.log.length?D.log.map(l=>`<div><time>${hhmmss(l.t)}</time><b>${esc(ROLNOM[l.r]||"Sistema")}</b> · ${esc(l.x)}</div>`).join(""):`<p class="note">Aún no hay movimientos.</p>`}</div></div>
+    <div class="pg-card" style="margin-top:12px"><h3>Borrar todas las reservas</h3><p class="note">Elimina las reservas de los 3 días y deja las métricas en cero. Úsalo después de las pruebas, antes de la feria. No se puede deshacer.</p><button type="button" class="add${S.sureClear?" sure":""}" id="prodClear" style="border-style:solid">${S.sureClear?"Toca otra vez para borrar TODO":"🗑 Borrar todas las reservas"}</button></div>
     <div class="sec-t" style="margin-top:14px">Métricas</div>${renderKPI()}`;
   el.innerHTML=h;
 }
 document.getElementById("prodBody").addEventListener("submit",e=>{if(e.target.id!=="prodForm")return;e.preventDefault();prodFetch(document.getElementById("prodPin").value.trim())});
-document.getElementById("prodBody").addEventListener("click",async e=>{const a=e.target.closest("[data-pa]");if(!a||S.pending)return;
+document.getElementById("prodBody").addEventListener("click",async e=>{
+  const fp=e.target.closest("[data-fp]");if(fp){try{sessionStorage.setItem("fromProd","1")}catch(x){}return}
+  if(e.target.closest("#prodClear")){if(S.sureClear){S.sureClear=false;const r=await act("clearBookings",{});toast(r.ok?"Todas las reservas fueron borradas":r.msg);prodFetch()}else{S.sureClear=true}renderProd();return}
+  if(S.sureClear){S.sureClear=false;renderProd()}
+  const a=e.target.closest("[data-pa]");if(!a||S.pending)return;
   if(a.dataset.pa==="call"&&LIVE)beep();
   const r=await act(a.dataset.pa,{id:+a.dataset.id});if(!r.ok)toast(r.msg);prodFetch();renderProd()});
 setInterval(()=>{if(LIVE&&S.view==="produccion"&&S.prodOk&&!document.hidden)prodFetch()},3500);
