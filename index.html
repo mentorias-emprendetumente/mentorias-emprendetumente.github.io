@@ -13,18 +13,19 @@
  *
  * Estado ("db"):
  *   cfg:      { pin, dur, allowOtherDays, mtDur:{1,2}, lastCall, fechas:[3], ensayo, ubicacion }
- *   mentors:  [{ id, name, spec }]
- *   grid:     [{ id, day(0-2), mesa(1|2), mid, from:"HH:MM", to:"HH:MM" }]
- *   bookings: [{ id, day, mesa, start(min), name, email, status, calls, startedAt, endsAt, endedAt,
+ *   mentors:  [{ id, name, spec(cargo), tema(categoría) }]
+ *   grid:     [{ id, day(0-2), mid, from:"HH:MM", to:"HH:MM", dur }]   disponibilidad de cada mentor (las 2 mesas se comparten)
+ *   breaks:   [{ id, day, mesa|0, mid|0, from, to, label }]
+ *   bookings: [{ id, day, mesa, mid, dur, start(min), name, email, status, calls, startedAt, endsAt, endedAt,
  *                source, advance, reminded, tk, created }]
  *   seq:      último id usado
  * Contexto ("ctx"): { day(0-2), sec (segundos desde medianoche, hora de Santiago), nowMs }
  */
 var MentoriasCore = (function () {
   "use strict";
-  var OPEN = 600, CLOSE = 1200, GRACE = 5, MAXCALLS = 3, DAYS = 3;
+  var OPEN = 600, CLOSE = 1140, GRACE = 5, MAXCALLS = 3, DAYS = 3, MESAS = [1, 2];
   var LABEL_DIAS = ["Jueves 19", "Viernes 20", "Sábado 21"];
-  var TEMAS = ["Nueva Conveniencia", "Nuevas Energías", "Nueva Movilidad", "Vinculación con el Medio"];
+  var TEMAS = ["Nueva Conveniencia", "Nueva Movilidad", "Nuevas Energías", "Vinculación con el Medio"];
 
   function toMin(s) { var p = String(s).split(":"); return (+p[0]) * 60 + (+(p[1] || 0)); }
   function fmt(m) { m = Math.round(m); return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); }
@@ -37,37 +38,63 @@ var MentoriasCore = (function () {
     var cfg = db.cfg;
     function nextId() { db.seq = (+db.seq || 1000) + 1; return db.seq; }
     function mentorById(id) { for (var i = 0; i < db.mentors.length; i++) if (db.mentors[i].id === id) return db.mentors[i]; return null; }
-    function blocks(day, mesa) { return db.grid.filter(function (b) { return b.day === day && b.mesa === mesa; }).sort(function (a, b) { return toMin(a.from) - toMin(b.from); }); }
-    function blockAt(day, mesa, t) { return blocks(day, mesa).filter(function (b) { return t >= toMin(b.from) && t < toMin(b.to); })[0] || null; }
     function okDur(v) { v = +v; return v >= 15 && v <= 60 && v % 5 === 0; }
     function durB(b) { return okDur(b && b.dur) ? +b.dur : cfg.dur; }
+    function dk(k) { return +k.dur > 0 ? +k.dur : cfg.dur; }
     function slotsOf(b) { var out = [], d = durB(b); for (var t = toMin(b.from); t + d <= toMin(b.to); t += d) out.push(t); return out; }
-    /* duración de la mentoría que empieza a esa hora: la del bloque donde cae */
-    function durAt(day, mesa, t) { var bl = blocks(day, mesa); for (var i = 0; i < bl.length; i++) if (t >= toMin(bl[i].from) && t < toMin(bl[i].to)) return durB(bl[i]); return cfg.dur; }
+    function blocksOfMentor(day, mid) { return db.grid.filter(function (g) { return g.day === day && g.mid === mid; }).sort(function (a, b) { return toMin(a.from) - toMin(b.from); }); }
+    function mentorsOf(tema) { return db.mentors.filter(function (m) { return m.tema === tema; }); }
     function mn(n) { var x = cfg.mesaNames && cfg.mesaNames[n]; return x || "Mesa " + n; }
+    function overlap(a0, a1, b0, b1) { return a0 < b1 && a1 > b0; }
     function breaksOf(day, mesa) { return (db.breaks || []).filter(function (x) { return x.day === day && x.mesa === mesa; }); }
-    /* descanso que se cruza con el intervalo [t, t+d) (minutos) */
-    function breakOver(day, mesa, t, d) { return breaksOf(day, mesa).filter(function (x) { return t < toMin(x.to) && t + d > toMin(x.from); })[0] || null; }
+    function breaksOfM(day, mid) { return (db.breaks || []).filter(function (x) { return x.day === day && x.mid === mid; }); }
+    /* descanso (de la mesa o del mentor) que se cruza con el intervalo [t, t+d) (minutos) */
+    function breakOver(day, mesa, t, d) { return breaksOf(day, mesa).filter(function (x) { return overlap(t, t + d, toMin(x.from), toMin(x.to)); })[0] || null; }
+    function breakOverM(day, mid, t, d) { return breaksOfM(day, mid).filter(function (x) { return overlap(t, t + d, toMin(x.from), toMin(x.to)); })[0] || null; }
     function breakNow(mesa) { var m = ctx.sec / 60; return breaksOf(ctx.day, mesa).filter(function (x) { return m >= toMin(x.from) && m < toMin(x.to); })[0] || null; }
-    function isSlot(day, mesa, t) { return blocks(day, mesa).some(function (b) { return slotsOf(b).indexOf(t) >= 0; }); }
     function active(k) { return k.status !== "liberado" && k.status !== "cancelada"; }
     /* una sesión adelantada que terminó antes de su hora deja su cupo libre */
     function occupies(k) { return active(k) && !(k.status === "finalizada" && k.endedAt != null && k.endedAt <= k.start * 60); }
     function waiting(k) { return k.status === "reservado" || k.status === "presente"; }
-    function bookingAt(day, mesa, t) { return db.bookings.filter(function (k) { return k.day === day && k.mesa === mesa && k.start === t && occupies(k); })[0] || null; }
-    function activeSession(day, mesa) { return db.bookings.filter(function (k) { return k.day === day && k.mesa === mesa && k.status === "enmesa"; })[0] || null; }
-    function curSlot(day, mesa) {
-      if (day !== ctx.day) return null;
-      var bl = blocks(day, mesa);
-      for (var i = 0; i < bl.length; i++) { var s = slotsOf(bl[i]); for (var j = 0; j < s.length; j++) if (ctx.sec >= s[j] * 60 && ctx.sec < (s[j] + durB(bl[i])) * 60) return s[j]; }
-      return null;
+    function mentorBusy(day, mid, t, d, except) { return db.bookings.some(function (k) { return k !== except && k.day === day && k.mid === mid && occupies(k) && overlap(k.start, k.start + dk(k), t, t + d); }); }
+    function mesaBusy(day, mesa, t, d, except) { return db.bookings.some(function (k) { return k !== except && k.day === day && k.mesa === mesa && occupies(k) && overlap(k.start, k.start + dk(k), t, t + d); }); }
+    function freeMesa(day, t, d) { for (var i = 0; i < MESAS.length; i++) { var m = MESAS[i]; if (!mesaBusy(day, m, t, d) && !breakOver(day, m, t, d)) return m; } return 0; }
+    function bookable(day, t, d) { if (day > ctx.day) return true; if (day < ctx.day) return false; return (t + d) * 60 - ctx.sec >= GRACE * 60; }
+    function loadOf(day, mid) { return db.bookings.filter(function (k) { return k.day === day && k.mid === mid && active(k); }).length; }
+    /* horarios reservables de una categoría un día: [{ start, dur, total, mids:[libres], mesa(libre o 0) }] */
+    function slotsFor(day, tema) {
+      var map = {};
+      mentorsOf(tema).forEach(function (m) {
+        blocksOfMentor(day, m.id).forEach(function (g) {
+          var d = durB(g);
+          slotsOf(g).forEach(function (t) {
+            if (!bookable(day, t, d)) return;
+            var e = map[t] || (map[t] = { start: t, dur: d, total: 0, mids: [], mesa: 0 });
+            e.total++;
+            if (!mentorBusy(day, m.id, t, d) && !breakOverM(day, m.id, t, d)) e.mids.push(m.id);
+          });
+        });
+      });
+      return Object.keys(map).map(function (k) { var e = map[k]; e.mesa = freeMesa(day, e.start, e.dur); return e; }).sort(function (a, b) { return a.start - b.start; });
     }
-    function secsLeft(day, mesa, t) { return (t + durAt(day, mesa, t)) * 60 - ctx.sec; }
-    function bookable(day, mesa, t) { if (day > ctx.day) return true; if (day < ctx.day) return false; return secsLeft(day, mesa, t) >= GRACE * 60; }
+    function bookingAtMesa(day, mesa, t) { return db.bookings.filter(function (k) { return k.day === day && k.mesa === mesa && occupies(k) && t >= k.start && t < k.start + dk(k); })[0] || null; }
+    function activeSession(day, mesa) { return db.bookings.filter(function (k) { return k.day === day && k.mesa === mesa && k.status === "enmesa"; })[0] || null; }
+    /* mentor libre ahora mismo (para atender sin reserva): su bloque cubre la hora actual y no está ocupado */
+    function mentorsNow() {
+      var m = Math.floor(ctx.sec / 60), out = [];
+      db.mentors.forEach(function (x) {
+        var g = blocksOfMentor(ctx.day, x.id).filter(function (b) { return m >= toMin(b.from) && m < toMin(b.to); })[0]; if (!g) return;
+        var d = Math.min(durB(g), toMin(g.to) - m); if (d < 10) return;
+        if (mentorBusy(ctx.day, x.id, m, d) || breakOverM(ctx.day, x.id, m, d)) return;
+        out.push({ mid: x.id, dur: d });
+      });
+      return out;
+    }
+    function secsLeft(k) { return (k.start + dk(k)) * 60 - ctx.sec; }
     function canFree(k) { return ctx.sec - k.start * 60 >= GRACE * 60 && k.calls >= MAXCALLS; }
     function find(id) { id = +id; return db.bookings.filter(function (k) { return k.id === id; })[0] || null; }
     function startSession(k) {
-      var d = durAt(k.day, k.mesa, k.start), slotEnd = (k.start + d) * 60;
+      var d = dk(k), slotEnd = (k.start + d) * 60;
       k.startedAt = ctx.sec;
       /* entra antes de su hora: duración completa; en su hora o tarde: hasta el fin de su cupo */
       k.endsAt = ctx.sec < k.start * 60 ? ctx.sec + d * 60 : Math.min(ctx.sec + d * 60, slotEnd);
@@ -80,24 +107,25 @@ var MentoriasCore = (function () {
       checkPin: function () { return ok(); },
 
       book: function (p) {
-        var day = +p.day, mesa = +p.mesa, start = +p.start, first = String(p.first || "").trim(), ini = String(p.ini || "").trim(), email = String(p.email || "").trim();
+        var day = +p.day, start = +p.start, tema = String(p.tema || ""), first = String(p.first || "").trim(), ini = String(p.ini || "").trim(), email = String(p.email || "").trim();
         if (!p.consent) return fail("Falta aceptar el aviso de privacidad.");
         if (first.length < 2) return fail("Escribe tu nombre.");
         if (!/^[a-záéíóúñü]$/i.test(ini)) return fail("Escribe la inicial de tu apellido.");
         if (email && !/^\S+@\S+\.\S+$/.test(email)) return fail("El correo no es válido.");
-        if (mesa !== 1 && mesa !== 2) return fail("Mesa no válida.");
+        if (TEMAS.indexOf(tema) < 0) return fail("Elige una categoría.");
         var allowed = day === ctx.day || (cfg.allowOtherDays && day > ctx.day && day < DAYS);
         if (!allowed) return fail("Hoy solo se puede reservar para el mismo día.");
-        if (!isSlot(day, mesa, start)) return fail("Ese horario ya no existe. Elige otro.");
-        var br = breakOver(day, mesa, start, durAt(day, mesa, start)); if (br) return fail("Ese horario cae en un descanso del mentor (" + br.from + "–" + br.to + "). Elige otro.");
-        if (!bookable(day, mesa, start)) return fail("Ese horario ya pasó. Elige otro.");
-        if (bookingAt(day, mesa, start)) return fail("Alguien acaba de tomar ese horario. Elige otro.");
-        var k = { id: nextId(), day: day, mesa: mesa, start: start, name: cap(first) + " " + ini.toUpperCase() + ".", email: email,
+        var e = slotsFor(day, tema).filter(function (x) { return x.start === start; })[0];
+        if (!e) return fail("Ese horario ya no existe o ya pasó. Elige otro.");
+        if (!e.mids.length) return fail("Ese horario se acaba de llenar. Elige otro.");
+        if (!e.mesa) return fail("Las 2 mesas están ocupadas a esa hora. Elige otro horario.");
+        var mid = e.mids.slice().sort(function (a, b) { return loadOf(day, a) - loadOf(day, b) || a - b; })[0];
+        var k = { id: nextId(), day: day, mesa: e.mesa, mid: mid, dur: e.dur, start: start, name: cap(first) + " " + ini.toUpperCase() + ".", email: email,
           status: "reservado", calls: 0, startedAt: null, endsAt: null, endedAt: null, source: "tablet", advance: day > ctx.day,
           reminded: false, tk: token(), created: ctx.nowMs };
         db.bookings.push(k);
-        var m = mentorById((blockAt(day, mesa, start) || {}).mid);
-        return ok({ id: k.id, tk: k.tk, name: k.name, day: day, mesa: mesa, start: start, dur: durAt(day, mesa, start), mentor: m ? m.name : "", spec: m ? m.spec : "", tema: m ? (m.tema || "") : "" });
+        var m = mentorById(mid);
+        return ok({ id: k.id, tk: k.tk, name: k.name, day: day, mesa: k.mesa, start: start, dur: e.dur, mid: mid, mentor: m ? m.name : "", spec: m ? m.spec : "", tema: m ? (m.tema || "") : "" });
       },
 
       call: function (p) {
@@ -123,35 +151,39 @@ var MentoriasCore = (function () {
       },
       walkin: function (p) {
         var mesa = +p.mesa, first = String(p.first || "").trim(), ini = String(p.ini || "").trim();
+        if (MESAS.indexOf(mesa) < 0) return fail("Mesa no válida.");
         if (first.length < 2) return fail("Escribe el nombre.");
-        var cs = curSlot(ctx.day, mesa); if (cs === null) return fail("No hay un turno en curso en esta mesa.");
         if (activeSession(ctx.day, mesa)) return fail("La mesa ya tiene una sesión en curso.");
-        var k0 = bookingAt(ctx.day, mesa, cs); if (k0 && k0.status !== "finalizada") return fail("Ese cupo tiene una reserva.");
-        db.bookings.push({ id: nextId(), day: ctx.day, mesa: mesa, start: cs, name: cap(first) + (ini ? " " + ini.toUpperCase() + "." : ""), email: "",
-          status: "enmesa", calls: 0, startedAt: ctx.sec, endsAt: (cs + durAt(ctx.day, mesa, cs)) * 60, endedAt: null, source: "mesa", advance: false, reminded: true, tk: token(), created: ctx.nowMs });
+        var nowM = Math.floor(ctx.sec / 60), av = mentorsNow(), pick = p.mid ? av.filter(function (x) { return x.mid === +p.mid; })[0] : av[0];
+        if (!pick) return fail(p.mid ? "Ese mentor no está libre ahora." : "No hay mentores libres en este momento.");
+        if (mesaBusy(ctx.day, mesa, nowM, pick.dur) || breakOver(ctx.day, mesa, nowM, pick.dur)) return fail("Esta mesa tiene una reserva o una pausa en los próximos minutos.");
+        db.bookings.push({ id: nextId(), day: ctx.day, mesa: mesa, mid: pick.mid, dur: pick.dur, start: nowM, name: cap(first) + (ini ? " " + ini.toUpperCase() + "." : ""), email: "",
+          status: "enmesa", calls: 0, startedAt: ctx.sec, endsAt: ctx.sec + pick.dur * 60, endedAt: null, source: "mesa", advance: false, reminded: true, tk: token(), created: ctx.nowMs });
         return ok();
       },
       presente: function (p) { var k = find(p.id); if (!k || k.status !== "reservado") return fail("Esa reserva no está pendiente."); k.status = "presente"; return ok(); },
       prodInfo: function () { return ok(); },
       breakAdd: function (p) {
-        var day = +p.day, mesa = +p.mesa, from = String(p.from || ""), to = String(p.to || "");
-        if (!(day >= 0 && day < DAYS)) return fail("Día no válido."); if (mesa !== 1 && mesa !== 2) return fail("Mesa no válida.");
+        var day = +p.day, mesa = +p.mesa || 0, mid = +p.mid || 0, from = String(p.from || ""), to = String(p.to || "");
+        if (!(day >= 0 && day < DAYS)) return fail("Día no válido.");
+        if (mid) { if (!mentorById(mid)) return fail("Mentor no válido."); } else if (MESAS.indexOf(mesa) < 0) return fail("Mesa no válida.");
         if (!okHM(from) || !okHM(to) || toMin(to) <= toMin(from)) return fail("El descanso debe terminar después de empezar.");
-        var f = toMin(from), t = toMin(to);
-        if ((db.breaks || []).some(function (x) { return x.day === day && x.mesa === mesa && f < toMin(x.to) && t > toMin(x.from); })) return fail("Ya hay un descanso en ese horario.");
-        var act = day === ctx.day ? activeSession(day, mesa) : null; if (act && ctx.sec / 60 >= f && ctx.sec / 60 < t) return fail("Hay una mentoría en curso en " + mn(mesa) + ". Termínala antes de empezar el descanso.");
+        var f = toMin(from), t = toMin(to), own = mid ? breaksOfM(day, mid) : breaksOf(day, mesa);
+        if (own.some(function (x) { return overlap(f, t, toMin(x.from), toMin(x.to)); })) return fail("Ya hay un descanso en ese horario.");
+        var nowM = ctx.sec / 60;
+        if (!mid && day === ctx.day && activeSession(day, mesa) && nowM >= f && nowM < t) return fail("Hay una mentoría en curso en " + mn(mesa) + ". Termínala antes de empezar el descanso.");
         var label = String(p.label || "Descanso").trim().slice(0, 30) || "Descanso";
-        var afectadas = db.bookings.filter(function (k) { return k.day === day && k.mesa === mesa && waiting(k) && k.start < t && k.start + durAt(day, mesa, k.start) > f; }).length;
-        db.breaks = db.breaks || []; db.breaks.push({ id: nextId(), day: day, mesa: mesa, from: from, to: to, label: label });
+        var afectadas = db.bookings.filter(function (k) { return k.day === day && (mid ? k.mid === mid : k.mesa === mesa) && waiting(k) && overlap(k.start, k.start + dk(k), f, t); }).length;
+        db.breaks = db.breaks || []; db.breaks.push({ id: nextId(), day: day, mesa: mid ? 0 : mesa, mid: mid, from: from, to: to, label: label });
         return ok({ afectadas: afectadas }, afectadas ? "Descanso creado. Ojo: " + afectadas + " reserva(s) caen dentro; avísales o muévelas." : "Descanso creado.");
       },
       breakNow: function (p) {
-        var mesa = +p.mesa, mins = +p.mins; if (mesa !== 1 && mesa !== 2) return fail("Mesa no válida.");
+        var mesa = +p.mesa, mins = +p.mins; if (MESAS.indexOf(mesa) < 0) return fail("Mesa no válida.");
         if (!(mins >= 5 && mins <= 120 && mins % 5 === 0)) return fail("Duración de descanso no válida.");
         if (breakNow(mesa)) return fail(mn(mesa) + " ya está en descanso.");
         var a = activeSession(ctx.day, mesa); if (a) return fail("Hay una mentoría en curso en " + mn(mesa) + ". Termínala antes de empezar el descanso.");
         var f = Math.floor(ctx.sec / 60), t = Math.min(CLOSE, f + mins);
-        return A.breakAdd({ day: ctx.day, mesa: mesa, from: fmt(f), to: fmt(t), label: p.label || "Descanso" });
+        return A.breakAdd({ day: ctx.day, mesa: mesa, mid: 0, from: fmt(f), to: fmt(t), label: p.label || "Descanso" });
       },
       breakDel: function (p) {
         var id = +p.id, n = (db.breaks || []).length; db.breaks = (db.breaks || []).filter(function (x) { return x.id !== id; });
@@ -180,73 +212,80 @@ var MentoriasCore = (function () {
 
       gridSet: function (p) {
         var g = db.grid.filter(function (x) { return x.id === +p.id; })[0]; if (!g) return fail("Ese bloque ya no existe.");
-        if (p.field === "mid") { if (!mentorById(+p.value)) return fail("Mentor no válido."); g.mid = +p.value; }
-        else if (p.field === "from" || p.field === "to") { if (!okHM(p.value)) return fail("Hora no válida."); g[p.field] = p.value; }
+        var inBlock = function (x) { return db.bookings.filter(function (k) { return k.day === x.day && k.mid === x.mid && occupies(k) && k.start >= toMin(x.from) && k.start < toMin(x.to); }); };
+        var pend = inBlock(g);
+        if (p.field === "mid") {
+          if (!mentorById(+p.value)) return fail("Mentor no válido.");
+          if (pend.length) return fail("Este bloque ya tiene " + pend.length + " reserva(s). Cancélalas o bórralas antes de cambiar de mentor.");
+          if (blocksOfMentor(g.day, +p.value).some(function (o) { return o !== g && overlap(toMin(g.from), toMin(g.to), toMin(o.from), toMin(o.to)); })) return fail("Ese mentor ya tiene otro bloque en esas horas.");
+          g.mid = +p.value;
+        }
+        else if (p.field === "from" || p.field === "to") {
+          if (!okHM(p.value)) return fail("Hora no válida.");
+          var old = g[p.field]; g[p.field] = p.value;
+          if (toMin(g.to) <= toMin(g.from)) { g[p.field] = old; return fail("La hora de término debe ser después de la de inicio."); }
+          if (blocksOfMentor(g.day, g.mid).some(function (o) { return o !== g && overlap(toMin(g.from), toMin(g.to), toMin(o.from), toMin(o.to)); })) { g[p.field] = old; return fail("Se cruza con otro bloque del mismo mentor."); }
+          var ss = slotsOf(g), out = pend.filter(function (k) { return ss.indexOf(k.start) < 0; });
+          if (out.length) { g[p.field] = old; return fail("Hay " + out.length + " reserva(s) que quedarían fuera de ese horario. Cancélalas primero."); }
+        }
         else if (p.field === "dur") {
           if (!okDur(p.value)) return fail("Duración no válida (de 15 a 60 minutos, de 5 en 5).");
-          var ss = slotsOf(g), tomadas = db.bookings.filter(function (k) { return k.day === g.day && k.mesa === g.mesa && occupies(k) && ss.indexOf(k.start) >= 0; });
-          if (tomadas.length) return fail("Este bloque ya tiene " + tomadas.length + " reserva(s). Cancélalas o bórralas antes de cambiar la duración.");
+          if (pend.length) return fail("Este bloque ya tiene " + pend.length + " reserva(s). Cancélalas o bórralas antes de cambiar la duración.");
           g.dur = +p.value;
         }
-        else if (p.field === "mesa") { if (+p.value !== 1 && +p.value !== 2) return fail("Mesa no válida."); g.mesa = +p.value; }
         else return fail("Campo no válido.");
         return ok();
       },
-      gridDel: function (p) { db.grid = db.grid.filter(function (g) { return g.id !== +p.id; }); return ok(); },
+      gridDel: function (p) {
+        var g = db.grid.filter(function (x) { return x.id === +p.id; })[0]; if (!g) return ok();
+        var n = db.bookings.filter(function (k) { return k.day === g.day && k.mid === g.mid && occupies(k) && k.start >= toMin(g.from) && k.start < toMin(g.to); }).length;
+        if (n) return fail("Este bloque tiene " + n + " reserva(s). Cancélalas o bórralas antes de quitarlo.");
+        db.grid = db.grid.filter(function (x) { return x !== g; }); return ok();
+      },
       gridAdd: function (p) {
-        var day = +p.day, mesa = +p.mesa, bl = blocks(day, mesa), last = bl.length ? bl[bl.length - 1].to : "10:00", st = Math.min(toMin(last), CLOSE - 60);
-        if (!db.mentors.length) return fail("Primero agrega un mentor.");
-        db.grid.push({ id: nextId(), day: day, mesa: mesa, mid: db.mentors[0].id, from: fmt(st), to: fmt(Math.min(CLOSE, st + 120)), dur: cfg.dur });
+        var day = +p.day, mid = +p.mid || (db.mentors[0] || {}).id; if (!mentorById(mid)) return fail("Primero agrega un mentor.");
+        var f = p.from ? toMin(p.from) : null, t = p.to ? toMin(p.to) : null;
+        if (f === null) { var bl = blocksOfMentor(day, mid); f = Math.min(bl.length ? toMin(bl[bl.length - 1].to) : OPEN, CLOSE - 60); }
+        if (t === null) t = Math.min(CLOSE, f + 180);
+        if (!(day >= 0 && day < DAYS)) return fail("Día no válido.");
+        if (t <= f) return fail("La hora de término debe ser después de la de inicio.");
+        if (blocksOfMentor(day, mid).some(function (o) { return overlap(f, t, toMin(o.from), toMin(o.to)); })) return fail("Ese mentor ya tiene un bloque en esas horas.");
+        db.grid.push({ id: nextId(), day: day, mid: mid, from: fmt(f), to: fmt(t), dur: cfg.dur });
         return ok();
       },
       copyDay: function (p) {
         var day = +p.day, src = db.grid.filter(function (g) { return g.day === day; });
         var keep = db.grid.filter(function (g) { return g.day === day; });
-        for (var d = 0; d < DAYS; d++) if (d !== day) src.forEach(function (g) { keep.push({ id: nextId(), day: d, mesa: g.mesa, mid: g.mid, from: g.from, to: g.to, dur: durB(g) }); });
+        for (var d = 0; d < DAYS; d++) if (d !== day) src.forEach(function (g) { keep.push({ id: nextId(), day: d, mid: g.mid, from: g.from, to: g.to, dur: durB(g) }); });
         db.grid = keep;
         var bsrc = (db.breaks || []).filter(function (x) { return x.day === day; }), bkeep = (db.breaks || []).filter(function (x) { return x.day === day; });
-        for (var d2 = 0; d2 < DAYS; d2++) if (d2 !== day) bsrc.forEach(function (x) { bkeep.push({ id: nextId(), day: d2, mesa: x.mesa, from: x.from, to: x.to, label: x.label }); });
-        db.breaks = bkeep; return ok(null, "Parrilla y descansos copiados a los otros días.");
+        for (var d2 = 0; d2 < DAYS; d2++) if (d2 !== day) bsrc.forEach(function (x) { bkeep.push({ id: nextId(), day: d2, mesa: x.mesa || 0, mid: x.mid || 0, from: x.from, to: x.to, label: x.label }); });
+        db.breaks = bkeep; return ok(null, "Disponibilidad y descansos copiados a los otros días.");
       },
       mentorSet: function (p) {
         var m = mentorById(+p.id); if (!m) return fail("Ese mentor ya no existe.");
         if (p.field !== "name" && p.field !== "spec" && p.field !== "tema") return fail("Campo no válido.");
         var v = String(p.value || "").trim(); if (p.field === "name" && v.length < 2) return fail("El nombre es muy corto.");
-        if (p.field === "tema" && TEMAS.indexOf(v) < 0) return fail("Tema no válido.");
-        m[p.field] = v.slice(0, 60); return ok();
+        if (p.field === "tema" && TEMAS.indexOf(v) < 0) return fail("Categoría no válida.");
+        m[p.field] = v.slice(0, 80); return ok();
       },
       mentorDel: function (p) {
         var id = +p.id; if (db.grid.some(function (g) { return g.mid === id; })) return fail("Ese mentor tiene bloques en la parrilla. Quítalos primero.");
-        db.mentors = db.mentors.filter(function (m) { return m.id !== id; }); return ok();
+        if (db.bookings.some(function (k) { return k.mid === id && occupies(k); })) return fail("Ese mentor tiene reservas. Cancélalas primero.");
+        db.mentors = db.mentors.filter(function (m) { return m.id !== id; }); db.breaks = (db.breaks || []).filter(function (x) { return x.mid !== id; }); return ok();
       },
       mentorAdd: function (p) {
-        var name = String(p.name || "").trim(), days = (p.days || []).map(Number).filter(function (d) { return d >= 0 && d < DAYS; }), mesa = +p.mesa, f = toMin(p.from), t = toMin(p.to);
+        var name = String(p.name || "").trim(), days = (p.days || []).map(Number).filter(function (d) { return d >= 0 && d < DAYS; }), f = toMin(p.from || "10:00"), t = toMin(p.to || "13:00");
         if (name.length < 2) return fail("Escribe el nombre del mentor.");
-        if (!days.length) return fail("Elige al menos un día.");
-        if (mesa !== 1 && mesa !== 2) return fail("Mesa no válida.");
-        if (!okHM(p.from) || !okHM(p.to) || t <= f) return fail("La hora de término debe ser después de la de inicio.");
+        if (days.length && (!okHM(p.from) || !okHM(p.to) || t <= f)) return fail("La hora de término debe ser después de la de inicio.");
         var dnew = p.dur != null && p.dur !== "" ? +p.dur : cfg.dur; if (!okDur(dnew)) return fail("Duración no válida (de 15 a 60 minutos, de 5 en 5).");
-        var id = nextId(); db.mentors.push({ id: id, name: name.slice(0, 60), spec: String(p.spec || "").trim().slice(0, 60) || "Cargo", tema: TEMAS.indexOf(p.tema) >= 0 ? p.tema : TEMAS[0] });
-        var added = [], bad = [], adj = [];
-        days.forEach(function (d) {
-          var clashes = blocks(d, mesa).filter(function (b) { return f < toMin(b.to) && t > toMin(b.from); });
-          if (clashes.length && p.mode === "skip") { var c0 = clashes[0]; bad.push(LABEL_DIAS[d] + " (se cruza con " + (mentorById(c0.mid) || {}).name + " " + c0.from + "–" + c0.to + ")"); return; }
-          /* el mentor nuevo toma el horario: se recorta, divide o quita el bloque del otro */
-          clashes.forEach(function (b) {
-            var bf = toMin(b.from), bt = toMin(b.to), who = (mentorById(b.mid) || {}).name;
-            if (bf >= f && bt <= t) { db.grid = db.grid.filter(function (g) { return g !== b; }); adj.push(LABEL_DIAS[d] + ": " + who + " sale de " + b.from + "–" + b.to); }
-            else if (bf < f && bt > t) { db.grid.push({ id: nextId(), day: d, mesa: b.mesa, mid: b.mid, from: p.to, to: b.to, dur: durB(b) }); b.to = p.from; adj.push(LABEL_DIAS[d] + ": " + who + " queda " + b.from + "–" + p.from + " y " + p.to + "–" + fmt(bt)); }
-            else if (bf < f) { b.to = p.from; adj.push(LABEL_DIAS[d] + ": " + who + " queda " + b.from + "–" + b.to); }
-            else { b.from = p.to; adj.push(LABEL_DIAS[d] + ": " + who + " queda " + b.from + "–" + b.to); }
-          });
-          db.grid.push({ id: nextId(), day: d, mesa: mesa, mid: id, from: p.from, to: p.to, dur: dnew }); added.push(LABEL_DIAS[d]);
-        });
-        var msg = (added.length ? name + " agregado en Mesa " + mesa + ", " + p.from + "–" + p.to + ": " + added.join(", ") + "." : name + " quedó en la lista de mentores, sin bloques.") +
-          (adj.length ? " Ajustes: " + adj.join("; ") + "." : "") + (bad.length ? " No se agregó en " + bad.join("; ") + ". Ajusta la hora o la mesa en esos días." : "");
-        return ok({ added: added.length }, msg);
+        var id = nextId(); db.mentors.push({ id: id, name: name.slice(0, 80), spec: String(p.spec || "").trim().slice(0, 80) || "Por confirmar", tema: TEMAS.indexOf(p.tema) >= 0 ? p.tema : TEMAS[0] });
+        var added = [];
+        days.forEach(function (d) { db.grid.push({ id: nextId(), day: d, mid: id, from: p.from, to: p.to, dur: dnew }); added.push(LABEL_DIAS[d]); });
+        return ok({ added: added.length }, added.length ? name + " agregado: " + added.join(", ") + " de " + p.from + " a " + p.to + "." : name + " quedó en la lista de mentores, sin bloques.");
       }
     };
-    return { A: A, blocks: blocks, blockAt: blockAt, mentorById: mentorById, slotsOf: slotsOf, durAt: durAt, waiting: waiting, mn: mn, breakNow: breakNow, breakOver: breakOver };
+    return { A: A, mentorById: mentorById, slotsOf: slotsOf, slotsFor: slotsFor, blocksOfMentor: blocksOfMentor, mentorsOf: mentorsOf, mentorsNow: mentorsNow, dk: dk, durB: durB, waiting: waiting, occupies: occupies, mn: mn, breakNow: breakNow, breakOver: breakOver, breakOverM: breakOverM, mesaBusy: mesaBusy, bookingAtMesa: bookingAtMesa, activeSession: activeSession, secsLeft: secsLeft, loadOf: loadOf };
   }
 
   var PUBLIC = { book: true };
@@ -267,24 +306,56 @@ var MentoriasCore = (function () {
       grid: db.grid,
       breaks: db.breaks || [],
       bookings: db.bookings.map(function (k) {
-        return { id: k.id, day: k.day, mesa: k.mesa, start: k.start, name: k.name, hasEmail: !!k.email, status: k.status, calls: k.calls,
+        return { id: k.id, day: k.day, mesa: k.mesa, mid: k.mid || 0, dur: k.dur || db.cfg.dur, start: k.start, name: k.name, hasEmail: !!k.email, status: k.status, calls: k.calls,
           startedAt: k.startedAt, endsAt: k.endsAt, endedAt: k.endedAt, source: k.source, advance: !!k.advance };
       })
     };
   }
 
+  /* Planificación real de "Networking Al Grano" (documento de Copec). Bloques: Mañana 10–13, Mediodía 13–16, Tarde 16–19 */
+  var BLOQ = { M: ["10:00", "13:00"], D: ["13:00", "16:00"], T: ["16:00", "19:00"] };
+  var PLAN = [
+    ["Josefina Achurra", "Senior Business Developer", 0, [[0, "M"]]],
+    ["Francisco Correa", "Subgerente Retail Pronto", 0, [[0, "D"]]],
+    ["Sebastián Parot", "Jefe de App Copec", 0, [[0, "T"]]],
+    ["Bernard Descazeaux", "Product Manager, Copec Empresa", 0, [[0, "T"]]],
+    ["Oscar Guerrero", "Subgerente Alianzas y Retail Media", 0, [[1, "M"]]],
+    ["Mauricio Cortés", "Jefe Alianzas", 0, [[1, "M"]]],
+    ["Tomás Ulloa", "Subgerente Estrategia y Productos, Ecosistema Digital", 0, [[1, "D"]]],
+    ["Benjamín Silva", "Subgerente Crecimiento y Clientes, Ecosistema Digital", 0, [[1, "D"]]],
+    ["María José Subercaseaux", "Sub Gerente Sostenibilidad Arcoprime", 0, [[1, "T"]]],
+    ["Felipe Rivera", "Business Developer", 0, [[2, "M"]]],
+    ["Santiago Ariztía", "Senior Business Developer", 1, [[0, "M"], [1, "D"]]],
+    ["Nicolás Orellana", "Product Lead", 1, [[2, "M"]]],
+    ["Laura González", "Gerente Gestión Energética y Sostenibilidad, Copec Emoac", 2, [[0, "M"]]],
+    ["Diego Armas", "Jefe Finanzas, Copec Flux", 2, [[0, "D"], [1, "M"]]],
+    ["Eduardo Peralta", "Senior Business Developer", 2, [[0, "T"]]],
+    ["Esteban Amador", "Líder Nuevos Negocios, Copec Emoac", 2, [[1, "D"]]],
+    ["Milena Pérez", "Jefa de Sostenibilidad, Copec Emoac", 2, [[1, "T"]]],
+    ["Tomás Vicuña", "Sub Gerente RED Copec Voltex", 2, [[2, "T"]]],
+    ["Catalina Meza", "CX Specialist", 3, [[0, "M"]]],
+    ["Ignacio Díaz", "Ingeniero de Cambio Climático", 3, [[0, "D"]]],
+    ["Francisca Choy", "UX/UI Designer", 3, [[1, "M"]]],
+    ["Agustina Henríquez", "Jefe de Estudios", 3, [[1, "D"]]],
+    ["Sebastián López", "Jefe Producto Marketing Motorsport", 3, [[1, "T"]]],
+    ["Ignacia Bachler", "Ingeniero Cambio Climático", 3, [[2, "M"]]],
+    ["Nicole Villagra", "Líder Comunicaciones Energía", 3, [[2, "D"]]],
+    ["Gabriela Delgado", "Software Engineer", 3, [[2, "D"]]],
+    ["Rommy Gómez", "Ingeniera de Gestión Sostenibilidad", 3, [[2, "T"]]]
+  ];
+  /* inscritos en el formulario de mentores que aún no tienen bloque asignado (categoría = su primer interés) */
+  var EXTRA = [
+    ["Carina Lopez", 0], ["Simon Carcamo", 2], ["Vicente Rasmussen Figueroa", 0], ["Antonella Giovanetti", 1], ["Ignacia Espinoza", 0], ["Rosario Peña", 1],
+    ["Paula Galliussi", 0], ["Carlos Osorio", 2], ["Martín Navarrete", 0], ["Glenda Rojas", 0], ["Juan Monroy", 0], ["Daniela Devia", 0]
+  ];
   function defaultDb() {
-    var mentors = [
-      { id: 1, name: "Mentor 1 (editar)", spec: "Cargo", tema: TEMAS[0] },
-      { id: 2, name: "Mentor 2 (editar)", spec: "Cargo", tema: TEMAS[1] },
-      { id: 3, name: "Mentor 3 (editar)", spec: "Cargo", tema: TEMAS[2] },
-      { id: 4, name: "Mentor 4 (editar)", spec: "Cargo", tema: TEMAS[3] },
-      { id: 5, name: "Mentor 5 (editar)", spec: "Cargo", tema: TEMAS[0] }
-    ];
-    var base = [[1, 1, "10:00", "14:00"], [1, 2, "14:00", "17:00"], [1, 3, "17:00", "20:00"], [2, 4, "10:00", "15:00"], [2, 5, "15:00", "20:00"]];
-    var grid = [], id = 100;
-    for (var d = 0; d < DAYS; d++) base.forEach(function (b) { grid.push({ id: ++id, day: d, mesa: b[0], mid: b[1], from: b[2], to: b[3], dur: 20 }); });
-    return { cfg: { pin: "1234", dur: 20, allowOtherDays: true, mtDur: { 1: 20, 2: 20 }, lastCall: null, fechas: ["2026-11-19", "2026-11-20", "2026-11-21"], ensayo: "", ubicacion: "Stand Copec, feria Emprende tu Mente", mesaNames: { 1: "Mesa 1", 2: "Mesa 2" } },
+    var mentors = [], grid = [], id = 100;
+    PLAN.forEach(function (p) {
+      var m = { id: ++id, name: p[0], spec: p[1], tema: TEMAS[p[2]] }; mentors.push(m);
+      p[3].forEach(function (b) { grid.push({ id: ++id, day: b[0], mid: m.id, from: BLOQ[b[1]][0], to: BLOQ[b[1]][1], dur: 20 }); });
+    });
+    EXTRA.forEach(function (e) { mentors.push({ id: ++id, name: e[0], spec: "Por confirmar", tema: TEMAS[e[1]] }); });
+    return { cfg: { pin: "1234", dur: 20, allowOtherDays: true, mtDur: { 1: 20, 2: 20 }, lastCall: null, fechas: ["2026-11-19", "2026-11-20", "2026-11-21"], ensayo: "", ubicacion: "Stand Copec · Parque Bicentenario de Vitacura", mesaNames: { 1: "Mesa 1", 2: "Mesa 2" } },
       mentors: mentors, grid: grid, breaks: [], bookings: [], seq: id };
   }
 
@@ -1894,6 +1965,12 @@ body:not(.live) .prodlink{display:none}
 .brkbox{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:#fff8e6;border:1px solid #e8c76a;border-radius:10px;padding:8px 12px;margin:0 0 10px;font-size:14px;color:#6b4d00}
 .brkbox.on{background:#fde9e7;border-color:var(--red);color:#7a1b13}
 .brkbox select{width:auto;padding:4px 8px}.brkbox button{border:2px solid currentColor;background:#fff;color:inherit;border-radius:8px;padding:5px 12px;font-weight:700}
+.catgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px;align-items:start}
+.cat-col .block{margin-bottom:10px}.grp{font-size:14px;color:var(--navy);margin-bottom:2px}.grpm{display:grid;gap:2px;font-size:12px;color:var(--muted);margin-bottom:10px}.grpm b{color:var(--ink)}
+.cat-col .slots{grid-template-columns:repeat(auto-fill,minmax(68px,1fr))}.cat-col .slot{font-size:15px;padding:8px 0}
+.cat-col .tema-title{font-size:19px}
+table.cov td{vertical-align:top;font-size:13px}table.cov th{font-size:12px}
+.est{display:inline-block;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap}.est.ok{background:#e8f6ee;color:#17663a}.est.lo{background:#fdf3dc;color:#8a5a00}.est.hi{background:#fde9e7;color:#9a1d14}.est.off{background:var(--bg);color:var(--muted)}
 .brkrow{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #e3e8f1;font-size:14px}
 .prodonly{display:none}body.prodmode .prodonly{display:inline-block}
 .exitfull{display:none;position:fixed;bottom:10px;left:10px;z-index:50;border:none;border-radius:99px;padding:8px 14px;font-weight:700;font-size:13px;background:rgba(0,0,0,.55);color:#fff;opacity:.35}
@@ -2008,7 +2085,7 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
 (function(){
 "use strict";
 const DAYS=["Jueves 19","Viernes 20","Sábado 21"];
-const TEMAS=["Nueva Conveniencia","Nuevas Energías","Nueva Movilidad","Vinculación con el Medio"];
+const TEMAS=["Nueva Conveniencia","Nueva Movilidad","Nuevas Energías","Vinculación con el Medio"];
 function applyDayLabels(){(S.fechas||[]).forEach((f,i)=>{if(!f)return;const d=new Date(f+"T12:00:00");if(isNaN(d))return;const t=d.toLocaleDateString("es-CL",{weekday:"long",day:"numeric"});DAYS[i]=t.charAt(0).toUpperCase()+t.slice(1)})}
 const CFG=window.MENTORIAS_CONFIG||{}, LIVE=!!CFG.api;
 /* hora entregada por el servidor (modo real) */
@@ -2016,12 +2093,12 @@ const SRV={sec:null,at:0,frozen:false};
 /* hora real de Santiago de Chile (respeta horario de verano), en segundos desde medianoche */
 const TZF=new Intl.DateTimeFormat("es-CL",{timeZone:"America/Santiago",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"});
 function realSantiagoSec(){const p={};TZF.formatToParts(new Date()).forEach(x=>p[x.type]=x.value);return (+p.hour%24)*3600+(+p.minute)*60+(+p.second)}
-/* modo presentación: si se abre fuera del horario de la feria (10:00 a 20:00), el reloj parte en 15:10 y avanza solo, para mostrar todo funcionando */
-const REAL0=realSantiagoSec(), DEMO=!LIVE&&(REAL0<10*3600||REAL0>=20*3600), OFFSET=DEMO?(15*60+10)*60-REAL0:0;
+/* modo presentación: si se abre fuera del horario de la feria (10:00 a 19:00), el reloj parte en 15:10 y avanza solo, para mostrar todo funcionando */
+const REAL0=realSantiagoSec(), DEMO=!LIVE&&(REAL0<10*3600||REAL0>=19*3600), OFFSET=DEMO?(15*60+10)*60-REAL0:0;
 function santiagoSec(){
   if(LIVE){if(SRV.sec==null)return realSantiagoSec();return SRV.frozen?SRV.sec:Math.min(86399,SRV.sec+Math.floor((performance.now()-SRV.at)/1000))}
   return ((realSantiagoSec()+OFFSET)%86400+86400)%86400}
-const OPEN=10*60, CLOSE=20*60, GRACE=5, MAXCALLS=3;
+const OPEN=10*60, CLOSE=19*60, GRACE=5, MAXCALLS=3;
 const toMin=s=>{const [h,m]=String(s).split(":").map(Number);return h*60+(m||0)};
 const fmt=m=>String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");
 const mmss=s=>{s=Math.max(0,Math.round(s));return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")};
@@ -2029,39 +2106,35 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"
 const initials=n=>n.split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join("");
 let uid=100;
 
-const MENTORS=[
-  {id:1,name:"Valentina Rojas",spec:"Finanzas para emprender"},
-  {id:2,name:"Matías Soto",spec:"Marketing digital"},
-  {id:3,name:"Carolina Muñoz",spec:"Ventas B2B"},
-  {id:4,name:"Diego Fuentes",spec:"Innovación y tecnología"},
-  {id:5,name:"Fernanda Lagos",spec:"Modelo de negocio"}
-];
-const baseGrid=[[1,1,"10:00","14:00"],[1,2,"14:00","17:00"],[1,3,"17:00","20:00"],[2,4,"10:00","15:00"],[2,5,"15:00","20:00"]];
+const DB0=MentoriasCore.defaultDb();
+uid=DB0.seq;
 const S={
   day:0, sec:santiagoSec(), dur:20, allowOtherDays:true,
-  mentors:MENTORS,
-  grid:[0,1,2].flatMap(d=>baseGrid.map(([mesa,mid,from,to])=>({id:++uid,day:d,mesa,mid,from,to}))),
-  bookings:[
-    ["Lucas H.",1,"11:00","finalizada",1],["Sofía E.",1,"12:20","liberado",3],["Vicente R.",2,"13:40","finalizada",0],
-    ["Camila R.",1,"15:00","enmesa",1],["Josefa P.",2,"15:00","reservado",2],["Tomás V.",1,"15:20","presente",0],
-    ["Martín C.",2,"15:40","reservado",0],["Isidora M.",1,"16:00","reservado",0],["Antonia G.",2,"16:20","reservado",0],
-    ["Benjamín A.",1,"16:40","reservado",0],["Florencia T.",2,"17:00","reservado",0]
-  ].map(([name,mesa,t,status,calls])=>{const s=toMin(t);return {id:++uid,day:0,mesa,start:s,name,email:"",status,calls,startedAt:status==="enmesa"?s*60:null,endsAt:status==="enmesa"?(s+20)*60:null,endedAt:status==="finalizada"?(s+20)*60:null}}),
-  view:"tablet", nm:{name:"",spec:"",tema:TEMAS[0],dur:20,days:[0],mesa:1,from:"10:00",to:"12:00",mode:"take",msg:"",ok:false}, kpiSrc:LIVE?"vivo":"ejemplo", pinValue:null, mpinIn:"", mpinErr:"", fechas:["2026-11-19","2026-11-20","2026-11-21"], ensayo:"", ubicacion:"Stand Copec, feria Emprende tu Mente", label:"", today:"", booked:null, hostTab:"reserva", pf:{day:"all",mesa:"all",q:"",all:false}, unlocked:false, pinTarget:"turnos", pinIn:"", pinErr:"", mt:1, mtDur:{1:20,2:20}, sure:null, banner:null,
-  tab:{step:"pick",tema:"",day:0,mesa:null,start:null,first:"",ini:"",email:"",ok:false,count:60}
+  mentors:DB0.mentors,
+  grid:DB0.grid,
+  bookings:[],
+  view:"tablet", nm:{name:"",spec:"",tema:TEMAS[0],dur:20,days:[0],from:"10:00",to:"13:00",msg:"",ok:false}, kpiSrc:LIVE?"vivo":"ejemplo", pinValue:null, mpinIn:"", mpinErr:"", fechas:["2026-11-19","2026-11-20","2026-11-21"], ensayo:"", ubicacion:"Stand Copec, feria Emprende tu Mente", label:"", today:"", booked:null, hostTab:"reserva", pf:{day:"all",mesa:"all",q:"",all:false}, unlocked:false, pinTarget:"turnos", pinIn:"", pinErr:"", mt:1, mtDur:{1:20,2:20}, sure:null, banner:null,
+  tab:{step:"pick",tema:"",day:0,bTema:"",start:null,first:"",ini:"",email:"",ok:false,count:60}
 };
-[["Ignacio L.",1,1,"10:20"],["Paula S.",1,2,"10:40"],["Rodrigo N.",1,1,"11:40"],["Daniela F.",1,2,"15:20"],["Joaquín B.",1,1,"17:20"],["Catalina V.",2,2,"10:00"],["Felipe O.",2,1,"12:00"],["Javiera M.",2,2,"18:20"]].forEach(([name,day,mesa,t])=>S.bookings.push({id:++uid,day,mesa,start:toMin(t),name,email:"",status:"reservado",calls:0}));
 const nowMin=()=>Math.floor(S.sec/60);
-/* los datos de ejemplo del Día 1 se acomodan a la hora real, para que la demo siempre tenga sentido */
-(function fitSeeds(){
-  if(LIVE){S.mentors=[];S.grid=[];S.bookings=[];return}
-  const n=nowMin(), seeds=S.bookings.filter(b=>b.day===0);
-  if(n<OPEN){seeds.forEach(b=>{b.status="reservado";b.calls=0;b.startedAt=b.endsAt=b.endedAt=null});return}
-  if(n>=CLOSE){seeds.forEach(b=>{if(b.status!=="liberado")b.status="finalizada";b.endedAt=(b.start+20)*60;b.startedAt=b.endsAt=null});return}
-  const cur=OPEN+Math.floor((n-OPEN)/20)*20, off=cur-15*60;
-  S.bookings=S.bookings.filter(b=>{if(b.day!==0)return true;b.start+=off;return b.start>=OPEN&&b.start+20<=CLOSE});
-  S.bookings.filter(b=>b.day===0).forEach(b=>{if(b.status==="enmesa"){b.startedAt=b.start*60;b.endsAt=(b.start+20)*60}if(b.status==="finalizada")b.endedAt=(b.start+20)*60});
-})();
+/* demo sin conexión: reservas de ejemplo del Día 1 alrededor de la hora actual, con mentores que realmente atienden a esa hora */
+function demoSeeds(){
+  const out=[],names=["Camila R.","Josefa P.","Tomás V.","Martín C.","Isidora M.","Antonia G.","Benjamín A.","Florencia T.","Lucas H.","Sofía E.","Vicente R.","Daniela F."];
+  const n=nowMin(),cur=Math.floor(n/20)*20;let ni=0;
+  if(n<OPEN||n>=CLOSE)return out;
+  for(let t=Math.max(OPEN,cur-60);t<=Math.min(CLOSE-20,cur+100);t+=20){
+    const av=S.mentors.filter(m=>S.grid.some(g=>g.day===0&&g.mid===m.id&&t>=toMin(g.from)&&t+20<=toMin(g.to)));
+    [1,2].forEach((mesa,i)=>{
+      if(!av[i]||(t/20+i)%3===0)return;
+      const past=t<cur,now=t===cur;
+      const status=past?(ni%4===3?"liberado":"finalizada"):now?(mesa===1?"enmesa":"reservado"):(ni%5===0?"presente":"reservado");
+      out.push({id:++uid,day:0,mesa,mid:av[i].id,dur:20,start:t,name:names[ni++%names.length],email:"",status,calls:status==="liberado"?3:0,
+        startedAt:status==="enmesa"?t*60:null,endsAt:status==="enmesa"?(t+20)*60:null,endedAt:status==="finalizada"?(t+20)*60:null});
+    });
+  }
+  return out;
+}
+if(LIVE){S.mentors=[];S.grid=[];S.bookings=[]}else S.bookings=demoSeeds();
 
 /* ---------- datos: en demo se guardan en esta página; en modo real, en Google Sheets ---------- */
 const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Mesa 1",2:"Mesa 2"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
@@ -2109,40 +2182,34 @@ function dateForDay(d){const f=(S.fechas||[])[d];if(f)return f;const base=S.toda
 
 /* ---------- lógica ---------- */
 const mentorById=id=>S.mentors.find(m=>m.id===id)||{name:"Por confirmar",spec:""};
-function blocks(day,mesa){return S.grid.filter(b=>b.day===day&&b.mesa===mesa).sort((a,b)=>toMin(a.from)-toMin(b.from))}
-function blockAt(day,mesa,t){return blocks(day,mesa).find(b=>t>=toMin(b.from)&&t<toMin(b.to))}
-function mentorAt(day,mesa,t){const b=blockAt(day,mesa,t);return b?mentorById(b.mid):null}
 const okDur=v=>{v=+v;return v>=15&&v<=60&&v%5===0};
 const durB=b=>okDur(b&&b.dur)?+b.dur:S.dur;
+const bk=k=>+k.dur>0?+k.dur:S.dur;
 function slotsOf(b){const out=[],d=durB(b);for(let t=toMin(b.from);t+d<=toMin(b.to);t+=d)out.push(t);return out}
 const MNr=n=>(S.mesaNames&&S.mesaNames[n])||"Mesa "+n;
 const MN=n=>esc(MNr(n));
+/* las reglas de reserva viven en core.js: aquí se consultan sobre el estado que muestra la pantalla */
+function CR(){return MentoriasCore.make({cfg:{dur:S.dur,mesaNames:S.mesaNames},mentors:S.mentors,grid:S.grid,breaks:S.breaks||[],bookings:S.bookings,seq:0},{day:S.day,sec:S.sec,nowMs:Date.now()})}
+function blocksOfMentor(day,mid){return S.grid.filter(g=>g.day===day&&g.mid===mid).sort((a,b)=>toMin(a.from)-toMin(b.from))}
+const mentorOf=b=>b&&b.mid?mentorById(b.mid):null;
 function breaksOf(day,mesa){return (S.breaks||[]).filter(x=>x.day===day&&x.mesa===mesa).sort((a,b)=>toMin(a.from)-toMin(b.from))}
-function breakOverC(day,mesa,t,d){return breaksOf(day,mesa).find(x=>t<toMin(x.to)&&t+d>toMin(x.from))||null}
 function breakNowC(mesa){const m=S.sec/60;return breaksOf(S.day,mesa).find(x=>m>=toMin(x.from)&&m<toMin(x.to))||null}
 function breakCtl(mesa){const b=breakNowC(mesa);
   if(b)return `<div class="brkbox on">☕ <b>${esc(b.label)}</b> hasta las <b>${b.to}</b> · quedan <b class="tnum" data-end="${toMin(b.to)*60}">${mmss(toMin(b.to)*60-S.sec)}</b> <button type="button" data-brk="end" data-mesa="${mesa}">Volver ahora</button></div>`;
-  if(activeSession(S.day,mesa))return `<div class="brkbox"><small>Para tomar un descanso, termina primero la mentoría en curso.</small></div>`;
-  return `<div class="brkbox"><span>☕ Descanso:</span><select data-brkl aria-label="Motivo">${["Descanso","Baño","Almuerzo","Colación"].map(x=>`<option>${x}</option>`).join("")}</select><select data-brkm aria-label="Minutos">${[5,10,15,20,30,45,60].map(x=>`<option value="${x}"${x===15?" selected":""}>${x} min</option>`).join("")}</select><button type="button" data-brk="now" data-mesa="${mesa}">Pausar ${MN(mesa)}</button></div>`}
-function durAt(day,mesa,t){for(const b of blocks(day,mesa))if(t>=toMin(b.from)&&t<toMin(b.to))return durB(b);return S.dur}
+  if(activeSession(S.day,mesa))return `<div class="brkbox"><small>Para pausar la mesa, termina primero la mentoría en curso.</small></div>`;
+  return `<div class="brkbox"><span>☕ Pausar la mesa:</span><select data-brkl aria-label="Motivo">${["Descanso","Baño","Almuerzo","Colación"].map(x=>`<option>${x}</option>`).join("")}</select><select data-brkm aria-label="Minutos">${[5,10,15,20,30,45,60].map(x=>`<option value="${x}"${x===15?" selected":""}>${x} min</option>`).join("")}</select><button type="button" data-brk="now" data-mesa="${mesa}">Pausar ${MN(mesa)}</button></div>`}
 const ACTIVE=b=>b.status!=="liberado"&&b.status!=="cancelada";
 /* una sesión adelantada que terminó antes de su hora deja su cupo libre para otra persona */
 const OCCUPIES=k=>ACTIVE(k)&&!(k.status==="finalizada"&&k.endedAt!=null&&k.endedAt<=k.start*60);
-function bookingAt(day,mesa,t){return S.bookings.find(k=>k.day===day&&k.mesa===mesa&&k.start===t&&OCCUPIES(k))}
-function activeSession(day,mesa){return S.bookings.find(k=>k.day===day&&k.mesa===mesa&&k.status==="enmesa")}
 const WAITING=k=>k.status==="reservado"||k.status==="presente";
-function startSession(k){
-  const d=durAt(k.day,k.mesa,k.start), slotEnd=(k.start+d)*60;
-  k.startedAt=S.sec;
-  /* si entra antes de su hora: duración completa elegida por el mentor; si entra en su hora o tarde: hasta el fin de su cupo */
-  k.endsAt=S.sec<k.start*60?S.sec+d*60:Math.min(S.sec+d*60,slotEnd);
-  k.status="enmesa";
-}
-function upcoming(day,mesa,cs){return S.bookings.filter(b=>b.day===day&&b.mesa===mesa&&WAITING(b)&&b.start!==cs&&(b.start+durAt(b.day,b.mesa,b.start))*60>S.sec).sort((a,b)=>a.start-b.start)}
-function curSlot(day,mesa){if(day!==S.day)return null;for(const b of blocks(day,mesa))for(const t of slotsOf(b))if(S.sec>=t*60&&S.sec<(t+durB(b))*60)return t;return null}
-function secsLeft(day,mesa,t){return (t+durAt(day,mesa,t))*60-S.sec}
-function bookable(day,mesa,t){if(day>S.day)return true;if(day<S.day)return false;return secsLeft(day,mesa,t)>=GRACE*60}
+function activeSession(day,mesa){return S.bookings.find(k=>k.day===day&&k.mesa===mesa&&k.status==="enmesa")}
+/* la reserva que corresponde a esta mesa en este momento */
+function curBooking(day,mesa){if(day!==S.day)return null;const m=S.sec/60;return S.bookings.find(k=>k.day===day&&k.mesa===mesa&&OCCUPIES(k)&&m>=k.start&&m<k.start+bk(k))||null}
+function upcoming(day,mesa,exceptId){return S.bookings.filter(b=>b.day===day&&b.mesa===mesa&&WAITING(b)&&b.id!==exceptId&&(b.start+bk(b))*60>S.sec).sort((a,b)=>a.start-b.start)}
+const secsLeftK=k=>(k.start+bk(k))*60-S.sec;
 function canFree(k){return S.sec-k.start*60>=GRACE*60&&k.calls>=MAXCALLS}
+const BLOQS=[["Mañana",OPEN,OPEN+180],["Mediodía",OPEN+180,OPEN+360],["Tarde",OPEN+360,CLOSE]];
+const bloqOf=t=>BLOQS.findIndex(b=>t>=b[1]&&t<b[2]);
 function availableDays(){return S.allowOtherDays?[0,1,2].filter(d=>d>=S.day):[S.day]}
 const STLAB={reservado:"Reservado",presente:"En el stand",enmesa:"En mentoría",finalizada:"Terminada",liberado:"No llegó · cupo liberado",cancelada:"Cancelada por recepción"};
 let AC=null;
@@ -2169,26 +2236,30 @@ function renderTablet(){
     const days=availableDays();
     if(!days.includes(T.day))T.day=days[0];
     if(days.length>1)h+=`<div class="days" role="group" aria-label="Día">${days.map(d=>`<button type="button" class="chip" data-day="${d}" aria-pressed="${d===T.day}">${d===S.day&&!/^Antes|terminó/.test(S.label||"")?"Hoy · ":""}${DAYS[d]}</button>`).join("")}</div>`;
-    h+=`<div class="temas" role="group" aria-label="Tema de la mentoría"><button type="button" class="tema-btn${T.tema===""?" on":""}" data-tema="">Todos los temas</button>${TEMAS.map(x=>`<button type="button" class="tema-btn${T.tema===x?" on":""}" data-tema="${esc(x)}">${esc(x)}</button>`).join("")}</div>`;
-    h+=`<div class="mesas">`;
-    for(const mesa of [1,2]){
-      h+=`<div class="mesa-col"><h2>${MN(mesa)}</h2>`;let any=false;
-      for(const b of blocks(T.day,mesa)){
-        const m=mentorById(b.mid);if(T.tema&&m&&m.tema!==T.tema)continue;
-        const sl=slotsOf(b).filter(t=>bookable(T.day,mesa,t)&&!breakOverC(T.day,mesa,t,durB(b)));if(!sl.length)continue;any=true;
-        h+=`<div class="block">${m&&m.tema?`<div class="tema-title">${esc(m.tema)}</div>`:""}<div class="mentor"><div class="avatar">${esc(initials(m.name))}</div><div><b>${esc(m.name)}</b><small>${esc(m.spec)} · ${b.from}–${b.to}</small></div></div><div class="slots">`;
-        h+=sl.map(t=>{const taken=!!bookingAt(T.day,mesa,t);const isNow=T.day===S.day&&S.sec>=t*60;
-          return `<button type="button" class="slot" data-mesa="${mesa}" data-t="${t}" ${taken?`disabled aria-label="${fmt(t)} ocupado"`:""}>${fmt(t)}${isNow&&!taken?`<small>AHORA · ${Math.floor(secsLeft(T.day,mesa,t)/60)}'</small>`:""}</button>`}).join("");
+    h+=`<div class="temas" role="group" aria-label="Categoría de la mentoría"><button type="button" class="tema-btn${T.tema===""?" on":""}" data-tema="">Todas las categorías</button>${TEMAS.map(x=>`<button type="button" class="tema-btn${T.tema===x?" on":""}" data-tema="${esc(x)}">${esc(x)}</button>`).join("")}</div>`;
+    const R=CR(),show=T.tema?[T.tema]:TEMAS;let any=false;
+    h+=`<div class="catgrid">`;
+    for(const tm of show){
+      const sl=R.slotsFor(T.day,tm);
+      if(!sl.length&&!T.tema)continue;any=true;
+      h+=`<div class="cat-col"><h2 class="tema-title">${esc(tm)}</h2>`;
+      if(!sl.length){h+=`<p class="empty">Este día no hay mentores de esta categoría, o ya no quedan horarios.</p></div>`;continue}
+      BLOQS.forEach((bq,bi)=>{
+        const g=sl.filter(e=>bloqOf(e.start)===bi);if(!g.length)return;
+        const ms=R.mentorsOf(tm).filter(m=>blocksOfMentor(T.day,m.id).some(b=>toMin(b.from)<bq[2]&&toMin(b.to)>bq[1]));
+        h+=`<div class="block"><div class="grp"><b>${bq[0]}</b> · ${fmt(bq[1])}–${fmt(bq[2])}</div><div class="grpm">${ms.map(m=>`<span><b>${esc(m.name)}</b> · ${esc(m.spec)}</span>`).join("")}</div><div class="slots">`;
+        h+=g.map(e=>{const full=!e.mids.length||!e.mesa;const isNow=T.day===S.day&&S.sec>=e.start*60;
+          return `<button type="button" class="slot" data-stema="${esc(tm)}" data-t="${e.start}" ${full?`disabled aria-label="${fmt(e.start)} lleno"`:""}>${fmt(e.start)}${isNow&&!full?`<small>AHORA · ${Math.floor(((e.start+e.dur)*60-S.sec)/60)}'</small>`:""}</button>`}).join("");
         h+=`</div></div>`;
-      }
-      if(!any)h+=`<p class="empty">${T.tema?"No quedan horarios de este tema en esta mesa.":"No quedan horarios en esta mesa."}</p>`;
+      });
       h+=`</div>`;
     }
-    h+=`</div>`;
+    if(!any)h+=`<p class="empty">No hay mentorías programadas para este día.</p>`;
+    h+=`</div><p class="note" style="margin-top:6px">Elige la hora: al confirmar te asignamos a uno de los mentores de la categoría y una de las 2 mesas. Un horario aparece tachado cuando todos sus mentores o las 2 mesas ya están ocupados.</p>`;
   } else if(T.step==="form"){
-    const m=mentorAt(T.day,T.mesa,T.start);const isNow=T.day===S.day&&S.sec>=T.start*60;
+    const isNow=T.day===S.day&&S.sec>=T.start*60;
     h+=`<form class="form" id="bookForm" novalidate>
-      <div class="summary"><b>${MN(T.mesa)}</b> · <b>${fmt(T.start)}</b> hrs${T.day!==S.day?" · <b>"+DAYS[T.day]+"</b>":" · hoy"}${m&&m.tema?"<br>Tema: <b>"+esc(m.tema)+"</b>":""}<br>Mentor: <b>${esc(m?m.name:"")}</b>${m&&m.spec?" · "+esc(m.spec):""}${isNow?`<br>Empieza ahora: tendrás <b>${Math.floor(secsLeft(T.start)/60)} minutos</b>. Acércate a la mesa al confirmar.`:""}</div>
+      <div class="summary">Categoría: <b>${esc(T.bTema)}</b><br><b>${fmt(T.start)}</b> hrs${T.day!==S.day?" · <b>"+DAYS[T.day]+"</b>":" · hoy"}<br>Al confirmar te asignamos un mentor de esta categoría y la mesa donde te esperan.${isNow?`<br>Empieza ahora: acércate al stand apenas confirmes.`:""}</div>
       <div class="row2">
         <div class="field"><label for="fFirst">Tu nombre</label><input type="text" id="fFirst" autocomplete="off" maxlength="20" value="${esc(T.first)}" placeholder="Camila"></div>
         <div class="field"><label for="fIni">Inicial apellido</label><input type="text" id="fIni" autocomplete="off" maxlength="1" value="${esc(T.ini)}" placeholder="R"></div>
@@ -2198,11 +2269,11 @@ function renderTablet(){
       <div class="btns"><button type="button" class="btn ghost" id="back">← Cambiar horario</button><button type="submit" class="btn primary" id="confirm">Confirmar reserva</button></div>
     </form>`;
   } else {
-    const m=mentorAt(T.day,T.mesa,T.start);const who=T.first.trim()+" "+T.ini.trim().toUpperCase()+".";
+    const B=S.booked||{},who=T.first.trim()+" "+T.ini.trim().toUpperCase()+".";
     h+=`<div class="done">
       <div>
         <h2>¡Listo, ${esc(T.first.trim())}!</h2>
-        <p class="mesabig">${MN(T.mesa)}</p>${m&&m.tema?`<p class="big">Tema: <b>${esc(m.tema)}</b></p>`:""}<p class="big">Te esperamos en <b>${MN(T.mesa)}</b> ${T.day!==S.day?"el <b>"+DAYS[T.day]+"</b> ":""}a las <b>${fmt(T.start)} hrs</b> con <b>${esc(m?m.name:"")}</b>.</p>
+        <p class="mesabig">${MN(B.mesa)}</p>${B.tema?`<p class="big">Categoría: <b>${esc(B.tema)}</b></p>`:""}<p class="big">Te esperamos en <b>${MN(B.mesa)}</b> ${T.day!==S.day?"el <b>"+DAYS[T.day]+"</b> ":""}a las <b>${fmt(B.start)} hrs</b> con <b>${esc(B.mentor||"")}</b>${B.spec?" ("+esc(B.spec)+")":""}.</p>
         <p class="big">Te llamaremos como <b>${esc(who)}</b> en la pantalla del stand.</p>
         <div class="warnbox">Escanea el QR para guardar la cita en tu calendario, con avisos <b>15 y 5 minutos antes</b>. Si no llegas, el mentor te llamará 3 veces y luego el cupo se libera.</div>
         <div class="btns" style="margin-top:16px"><button type="button" class="btn primary" id="finish">Ya lo escaneé · Salir</button></div>
@@ -2220,16 +2291,16 @@ function updateConfirm(){
   if(btn)btn.disabled=!(T.first.trim().length>=2&&/^[a-záéíóúñ]$/i.test(T.ini.trim())&&T.ok&&(T.email===""||/^\S+@\S+\.\S+$/.test(T.email)));
 }
 function calendarLink(){
-  const T=S.tab,m=mentorAt(T.day,T.mesa,T.start);
+  const T=S.tab,B=S.booked||{};
   const base=new Date();base.setDate(base.getDate()+(T.day-S.day));
   const ymd=base.getFullYear()+String(base.getMonth()+1).padStart(2,"0")+String(base.getDate()).padStart(2,"0");
   const hm=x=>String(Math.floor(x/60)).padStart(2,"0")+String(x%60).padStart(2,"0")+"00";
-  const p=new URLSearchParams({action:"TEMPLATE",text:"Mentoría Copec con "+(m?m.name:"mentor")+" · "+MNr(T.mesa),dates:ymd+"T"+hm(T.start)+"/"+ymd+"T"+hm(T.start+durAt(T.day,T.mesa,T.start)),ctz:"America/Santiago",details:(m&&m.tema?"Tema: "+m.tema+". ":"")+"Mentor: "+(m?m.name+" ("+m.spec+")":"")+". "+MNr(T.mesa)+". Llega 5 min antes.",location:"Stand Copec, feria Emprende tu Mente"});
+  const p=new URLSearchParams({action:"TEMPLATE",text:"Mentoría Copec con "+(B.mentor||"mentor")+" · "+MNr(B.mesa),dates:ymd+"T"+hm(B.start)+"/"+ymd+"T"+hm(B.start+(B.dur||S.dur)),ctz:"America/Santiago",details:(B.tema?"Categoría: "+B.tema+". ":"")+"Mentor: "+(B.mentor||"")+(B.spec?" ("+B.spec+")":"")+". "+MNr(B.mesa)+". Llega 5 min antes.",location:S.ubicacion||"Stand Copec"});
   return "https://calendar.google.com/calendar/render?"+p.toString();
 }
 function citaLink(b){
   const site=(CFG.site||(location.origin+location.pathname.replace(/[^/]*$/,""))).replace(/\/?$/,"/");
-  const p=new URLSearchParams({id:b.id,tk:b.tk,n:b.name,m:b.mentor||"",s:b.spec||"",t:b.tema||"",mesa:b.mesa,d:dateForDay(b.day),h:fmt(b.start),dur:b.dur,u:S.ubicacion||""});
+  const p=new URLSearchParams({id:b.id,tk:b.tk,n:b.name,m:b.mentor||"",s:b.spec||"",t:b.tema||"",mesa:b.mesa,mn:MNr(b.mesa),d:dateForDay(b.day),h:fmt(b.start),dur:b.dur,u:S.ubicacion||""});
   return site+"cita.html#"+p.toString();
 }
 function drawQR(){
@@ -2242,7 +2313,7 @@ function drawQR(){
     box.innerHTML=`<svg viewBox="0 0 ${size} ${size}" width="210" height="210" shape-rendering="crispEdges" role="img" aria-label="Código QR de tu cita"><rect width="${size}" height="${size}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
   }catch(e){box.innerHTML='<p class="note">No se pudo generar el QR.</p>'}
 }
-function resetTablet(){S.tab={step:"pick",day:S.day,mesa:null,start:null,first:"",ini:"",email:"",ok:false,count:60};renderAll()}
+function resetTablet(){S.tab={step:"pick",tema:S.tab.tema||"",day:S.day,bTema:"",start:null,first:"",ini:"",email:"",ok:false,count:60};renderAll()}
 
 /* ---------- tablet mentor ---------- */
 function renderMentorPin(){
@@ -2257,27 +2328,21 @@ function renderMentor(){
   if(LIVE&&!S.pinValue){renderMentorPin();return}
   const mesa=S.mt,day=S.day;
   document.querySelectorAll("[data-mt]").forEach(b=>{b.textContent=MNr(+b.dataset.mt);b.setAttribute("aria-pressed",+b.dataset.mt===mesa)});
-  const cs=curSlot(day,mesa), act=activeSession(day,mesa);
-  const m=mentorAt(day,mesa,cs!==null?cs:nowMin());
+  const act=activeSession(day,mesa), cur=curBooking(day,mesa), R=CR();
+  const shown=act||(cur&&cur.status!=="finalizada"?cur:null), m=mentorOf(shown);
   document.getElementById("mtTitle").textContent=MNr(mesa)+(m?" · "+m.name:"");
-  document.getElementById("mtSub").textContent=(m?m.spec+" · ":"")+DAYS[day]+(S.label?" · "+S.label:"")+" · tablet del mentor";
+  document.getElementById("mtSub").textContent=(m?m.spec+" · ":"")+DAYS[day]+(S.label?" · "+S.label:"")+" · tablet de la mesa";
   let h=`<div class="mt-wrap"><div class="cur">`+breakCtl(mesa);
   if(act){
-    const left=act.endsAt-S.sec, early=act.startedAt<act.start*60;
-    h+=`<div class="lbl">En mentoría · reservado ${fmt(act.start)}${early?" (entró antes)":""}</div><div class="who">${esc(act.name)}</div>
+    const left=act.endsAt-S.sec, early=act.startedAt<act.start*60, am=mentorOf(act);
+    h+=`<div class="lbl">En mentoría · reservado ${fmt(act.start)}${early?" (entró antes)":""}</div><div class="who">${esc(act.name)}</div><p class="meta">con ${esc(am?am.name:"")}${am&&am.tema?" · "+esc(am.tema):""}</p>
       <div><div class="timer-l">${left>0?"Tiempo restante":"Tiempo cumplido"}</div><div class="timer${left<120?" low":""}" data-end="${act.endsAt}">${mmss(left)}</div></div>
       <div class="mbtns"><button type="button" class="mb end" data-ma="fin" data-id="${act.id}">Terminar sesión</button></div>`;
-  } else if(cs===null){
-    h+=`<div class="lbl">Turno actual</div><div class="who" style="color:var(--muted)">Sin turno ahora</div><p class="meta">Fuera del horario de esta mesa.</p>`;
-  } else {
-    const k=bookingAt(day,mesa,cs), end=(cs+durAt(day,mesa,cs))*60;
-    h+=`<div class="lbl">Turno ${fmt(cs)} – ${fmt(cs+durAt(day,mesa,cs))}</div>`;
-    if(k&&k.status==="finalizada"){
-      h+=`<div class="who" style="color:var(--ok)">Mesa libre</div><p class="meta">${esc(k.name)} ya terminó. Si el siguiente está en el stand, llámalo o inícialo ahora desde la lista de la derecha.</p>`;
-    } else if(k){
-      const free=canFree(k);
-      h+=`<div class="who">${esc(k.name)}</div><span class="st ${k.status}" style="justify-self:start">${STLAB[k.status]}</span>
-      <div class="callrow">Llamados: ${[1,2,3].map(i=>`<span class="dot${k.calls>=i?" on":""}"></span>`).join("")} <span>${k.calls}/3</span> · esperando <b class="tnum" data-since="${cs*60}">${mmss(S.sec-cs*60)}</b></div>
+  } else if(cur&&cur.status!=="finalizada"){
+    const k=cur,free=canFree(k),end=(k.start+bk(k))*60,km=mentorOf(k);
+    h+=`<div class="lbl">Turno ${fmt(k.start)} – ${fmt(k.start+bk(k))}</div>
+      <div class="who">${esc(k.name)}</div><p class="meta">con ${esc(km?km.name:"")}${km&&km.tema?" · "+esc(km.tema):""}</p><span class="st ${k.status}" style="justify-self:start">${STLAB[k.status]}</span>
+      <div class="callrow">Llamados: ${[1,2,3].map(i=>`<span class="dot${k.calls>=i?" on":""}"></span>`).join("")} <span>${k.calls}/3</span> · esperando <b class="tnum" data-since="${k.start*60}">${mmss(S.sec-k.start*60)}</b></div>
       <div><div class="timer-l">Le quedan a este turno</div><div class="timer" data-end="${end}">${mmss(end-S.sec)}</div></div>
       <div class="mbtns">
         <button type="button" class="mb call" data-ma="call" data-id="${k.id}">📣 Llamar a ${esc(k.name)}</button>
@@ -2285,25 +2350,26 @@ function renderMentor(){
         <button type="button" class="mb free" data-ma="free" data-id="${k.id}" ${free?"":"disabled"}>Liberar cupo</button>
       </div>
       ${free?"":`<p class="small-note">"Liberar cupo" se activa tras ${GRACE} min de espera y ${MAXCALLS} llamados. Lo confirmas tú.</p>`}`;
-    } else {
-      const left=end-S.sec;
-      h+=`<div class="who" style="color:var(--ok)">Mesa libre</div>
-      <div><div class="timer-l">Le quedan a este turno</div><div class="timer" data-end="${end}">${mmss(left)}</div></div>
-      <p class="meta">Puedes adelantar al siguiente (lista de la derecha) o asignar este tiempo a alguien que esté esperando:</p>
-      <form class="walk" id="walkForm"><input id="wFirst" placeholder="Nombre" maxlength="20" aria-label="Nombre" autocomplete="off"><input id="wIni" placeholder="Inicial" maxlength="1" aria-label="Inicial del apellido" autocomplete="off"><button type="submit">Asignar e iniciar</button></form>`;
-    }
+  } else {
+    const av=R.mentorsNow().filter(x=>!R.mesaBusy(day,mesa,Math.floor(S.sec/60),x.dur));
+    h+=`<div class="lbl">Turno actual</div><div class="who" style="color:var(--ok)">Mesa libre</div>`;
+    if(cur&&cur.status==="finalizada")h+=`<p class="meta">${esc(cur.name)} ya terminó. Si el siguiente está en el stand, llámalo o inícialo desde la lista de la derecha.</p>`;
+    if(av.length){
+      h+=`<p class="meta">¿Llegó alguien sin reserva? Elige el mentor que lo atiende y asígnalo:</p>
+      <form class="walk" id="walkForm" style="grid-template-columns:1fr 1fr"><select id="wMid" aria-label="Mentor que atiende">${av.map(x=>{const mm=mentorById(x.mid);return `<option value="${x.mid}">${esc(mm.name)} · ${esc(mm.tema||"")}</option>`}).join("")}</select><span></span><input id="wFirst" placeholder="Nombre" maxlength="20" aria-label="Nombre" autocomplete="off"><input id="wIni" placeholder="Inicial" maxlength="1" aria-label="Inicial del apellido" autocomplete="off"><button type="submit" style="grid-column:1/-1">Asignar e iniciar</button></form>`;
+    } else h+=`<p class="meta">No hay mentores libres en este momento (fuera de horario, en descanso o con otra reserva).</p>`;
   }
   const mesaFree=!act;
   h+=`</div><div class="side-list"><h3>Siguientes en ${MN(mesa)}</h3>`;
-  const nx=upcoming(day,mesa,cs).slice(0,5);
+  const nx=upcoming(day,mesa,cur?cur.id:null).slice(0,6);
   if(!nx.length)h+=`<p class="note">No hay más reservas por ahora.</p>`;
   for(const n of nx){
     const canCall=mesaFree||n.start*60-S.sec<=GRACE*60;
-    const ready=mesaFree&&(n.status==="presente"||n.calls>0);
-    h+=`<div class="nxt${ready?" ready":""}"><span class="t tnum">${fmt(n.start)}</span><div><div class="n">${esc(n.name)}</div><span class="st ${n.status}">${STLAB[n.status]}</span>${n.calls?` <span class="small-note">· ${n.calls} llamado(s)</span>`:""}</div>
-      <div class="nb"><button type="button" data-ma="call" data-id="${n.id}" ${canCall?"":"disabled"}>📣 Llamar</button>${mesaFree?`<button type="button" class="go" data-ma="startEarly" data-id="${n.id}">Llegó · Iniciar ${d}'</button>`:""}</div></div>`;
+    const ready=mesaFree&&(n.status==="presente"||n.calls>0);const nm=mentorOf(n);
+    h+=`<div class="nxt${ready?" ready":""}"><span class="t tnum">${fmt(n.start)}</span><div><div class="n">${esc(n.name)}</div><div class="small-note">con ${esc(nm?nm.name:"")}</div><span class="st ${n.status}">${STLAB[n.status]}</span>${n.calls?` <span class="small-note">· ${n.calls} llamado(s)</span>`:""}</div>
+      <div class="nb"><button type="button" data-ma="call" data-id="${n.id}" ${canCall?"":"disabled"}>📣 Llamar</button>${mesaFree?`<button type="button" class="go" data-ma="startEarly" data-id="${n.id}">Llegó · Iniciar ${bk(n)}'</button>`:""}</div></div>`;
   }
-  h+=`<p class="note" style="margin-top:10px">${mesaFree?"La mesa está libre: puedes llamar e iniciar al siguiente antes de su hora. Su sesión dura los "+d+" min que elegiste.":"Al terminar la sesión actual podrás llamar e iniciar al siguiente antes de su hora."} Al llamar, el visor muestra el nombre en grande.</p></div></div>`;
+  h+=`<p class="note" style="margin-top:10px">${mesaFree?"La mesa está libre: puedes llamar e iniciar al siguiente antes de su hora.":"Al terminar la sesión actual podrás llamar e iniciar al siguiente antes de su hora."} Al llamar, el visor muestra el nombre en grande.</p></div></div>`;
   document.getElementById("mentorBody").innerHTML=h;
 }
 
@@ -2311,30 +2377,28 @@ function renderMentor(){
 function renderTV(){
   const day=S.day;
   let h=`<div class="tv-head"><div><h1>Mentorías Copec</h1><div class="sub">Feria Emprende tu Mente · ${DAYS[day]}${S.label?" · "+esc(S.label):""}</div></div><div style="display:flex;align-items:center;gap:2cqw"><svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="3483.52 50.47 224.32 48.82" role="img" aria-label="Copec"><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3551.558594 89.601562 C 3543.53125 89.601562 3536.996094 83.070312 3536.996094 75.039062 C 3536.996094 67.015625 3543.53125 60.484375 3551.558594 60.484375 C 3559.589844 60.484375 3566.125 67.015625 3566.125 75.039062 C 3566.125 83.070312 3559.589844 89.601562 3551.558594 89.601562 M 3551.558594 51.800781 C 3538.746094 51.800781 3528.316406 62.226562 3528.316406 75.039062 C 3528.316406 87.863281 3538.746094 98.285156 3551.558594 98.285156 C 3564.375 98.285156 3574.804688 87.863281 3574.804688 75.039062 C 3574.804688 62.226562 3564.375 51.800781 3551.558594 51.800781 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3610.554688 73.980469 C 3609.144531 75.445312 3607.253906 76.253906 3605.222656 76.253906 L 3591.667969 76.253906 L 3591.03125 75.613281 L 3591.03125 62.085938 L 3591.667969 61.453125 L 3605.027344 61.453125 C 3609.0625 61.453125 3612.46875 64.640625 3612.621094 68.5625 C 3612.695312 70.589844 3611.960938 72.511719 3610.554688 73.980469 M 3616.691406 57.585938 C 3613.640625 54.480469 3609.570312 52.769531 3605.222656 52.769531 L 3584.816406 52.769531 C 3583.449219 52.769531 3582.347656 53.875 3582.347656 55.234375 L 3582.347656 94.847656 C 3582.347656 96.214844 3583.449219 97.316406 3584.816406 97.316406 L 3588.566406 97.316406 C 3589.925781 97.316406 3591.03125 96.214844 3591.03125 94.847656 L 3591.03125 85.566406 L 3591.667969 84.933594 L 3604.953125 84.933594 C 3613.8125 84.933594 3621.144531 77.851562 3621.300781 69.144531 C 3621.382812 64.796875 3619.75 60.695312 3616.691406 57.585938 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3659.492188 52.769531 L 3629.046875 52.769531 C 3627.6875 52.769531 3626.578125 53.878906 3626.578125 55.238281 L 3626.578125 58.984375 C 3626.578125 60.347656 3627.6875 61.449219 3629.046875 61.449219 L 3659.492188 61.449219 C 3660.851562 61.449219 3661.960938 60.347656 3661.960938 58.984375 L 3661.960938 55.238281 C 3661.960938 53.878906 3660.851562 52.769531 3659.492188 52.769531 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3659.492188 88.636719 L 3629.046875 88.636719 C 3627.6875 88.636719 3626.578125 89.742188 3626.578125 91.101562 L 3626.578125 94.847656 C 3626.578125 96.214844 3627.6875 97.316406 3629.046875 97.316406 L 3659.492188 97.316406 C 3660.851562 97.316406 3661.960938 96.214844 3661.960938 94.847656 L 3661.960938 91.101562 C 3661.960938 89.742188 3660.851562 88.636719 3659.492188 88.636719 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3520.375 86.613281 C 3519.488281 85.726562 3518.070312 85.65625 3517.082031 86.4375 C 3514.292969 88.65625 3510.800781 89.777344 3507.234375 89.582031 C 3499.933594 89.1875 3494.03125 83.394531 3493.511719 76.105469 C 3493.222656 72.015625 3494.59375 68.117188 3497.382812 65.128906 C 3500.132812 62.171875 3504.015625 60.484375 3508.035156 60.484375 C 3511.199219 60.484375 3514.214844 61.484375 3516.742188 63.382812 C 3518.058594 64.371094 3519.851562 64.253906 3520.996094 63.105469 L 3523.175781 60.925781 C 3523.664062 60.4375 3523.933594 59.761719 3523.902344 59.074219 C 3523.878906 58.390625 3523.5625 57.75 3523.050781 57.3125 C 3518.449219 53.410156 3512.597656 51.46875 3506.558594 51.84375 C 3500.878906 52.195312 3495.527344 54.652344 3491.496094 58.746094 C 3487.460938 62.84375 3485.085938 68.230469 3484.820312 73.917969 C 3484.515625 80.332031 3486.785156 86.425781 3491.21875 91.074219 C 3495.65625 95.722656 3501.628906 98.28125 3508.035156 98.28125 C 3513.449219 98.28125 3518.722656 96.378906 3522.886719 92.910156 C 3523.414062 92.472656 3523.726562 91.824219 3523.757812 91.140625 C 3523.796875 90.449219 3523.527344 89.765625 3523.039062 89.277344 Z M 3520.375 86.613281 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3703.28125 86.613281 C 3702.394531 85.726562 3700.976562 85.65625 3699.988281 86.4375 C 3697.199219 88.65625 3693.699219 89.769531 3690.144531 89.582031 C 3682.839844 89.1875 3676.9375 83.394531 3676.417969 76.105469 C 3676.128906 72.015625 3677.503906 68.117188 3680.289062 65.128906 C 3683.039062 62.171875 3686.921875 60.484375 3690.945312 60.484375 C 3694.109375 60.484375 3697.121094 61.484375 3699.648438 63.382812 C 3700.964844 64.371094 3702.757812 64.253906 3703.902344 63.105469 L 3706.082031 60.925781 C 3706.570312 60.4375 3706.839844 59.761719 3706.808594 59.074219 C 3706.785156 58.390625 3706.472656 57.75 3705.957031 57.3125 C 3701.355469 53.410156 3695.496094 51.46875 3689.464844 51.84375 C 3683.785156 52.195312 3678.433594 54.652344 3674.402344 58.746094 C 3670.367188 62.84375 3667.996094 68.230469 3667.726562 73.917969 C 3667.425781 80.332031 3669.691406 86.425781 3674.125 91.074219 C 3678.5625 95.722656 3684.535156 98.28125 3690.945312 98.28125 C 3696.355469 98.28125 3701.628906 96.378906 3705.796875 92.910156 C 3706.320312 92.472656 3706.632812 91.824219 3706.664062 91.140625 C 3706.703125 90.449219 3706.441406 89.769531 3705.945312 89.277344 Z M 3703.28125 86.613281 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3658.070312 79.386719 C 3659.429688 79.386719 3660.539062 78.277344 3660.539062 76.917969 L 3660.539062 73.171875 C 3660.539062 71.804688 3659.429688 70.703125 3658.070312 70.703125 L 3639.605469 70.703125 C 3638.246094 70.703125 3637.136719 71.804688 3637.136719 73.171875 L 3637.136719 76.917969 C 3637.136719 78.277344 3638.246094 79.386719 3639.605469 79.386719 Z M 3658.070312 79.386719 "/></svg><div class="tv-clock">${fmt(nowMin())}</div></div></div><div class="tv-grid">`;
+  const Rtv=CR(),nowM=nowMin(),freeNow=Rtv.mentorsNow().length>0;
   for(const mesa of [1,2]){
-    const cs=curSlot(day,mesa);
-    const m=mentorAt(day,mesa,cs!==null?cs:nowMin());
-    h+=`<div class="tv-mesa"><h2>${MN(mesa)}<small>${m?esc(m.name)+" · "+esc(m.spec)+(m.tema?" · "+esc(m.tema):""):"Sin mentor en este horario"}</small></h2>`;
-    const act=activeSession(day,mesa);
-    const k=cs!==null?bookingAt(day,mesa,cs):null, end=cs!==null?(cs+durAt(day,mesa,cs))*60:0;
+    const act=activeSession(day,mesa),cur=curBooking(day,mesa),k=cur&&cur.status!=="finalizada"?cur:null,shown=act||k,m=mentorOf(shown);
+    h+=`<div class="tv-mesa"><h2>${MN(mesa)}<small>${m?esc(m.name)+(m.tema?" · "+esc(m.tema):""):"Esperando la próxima reserva"}</small></h2>`;
     if(act){
       h+=`<div class="now"><div><div class="lbl">EN MENTORÍA</div><div class="who">${esc(act.name)}</div><div class="meta">con ${esc(m?m.name:"")}</div></div><div class="cd"><b data-end="${act.endsAt}">${mmss(act.endsAt-S.sec)}</b><span>tiempo restante</span></div></div>`;
     } else if(breakNowC(mesa)){
-      const bk=breakNowC(mesa);
-      h+=`<div class="now free"><div><div class="lbl">☕ ${esc(bk.label.toUpperCase())}</div><div class="who">Volvemos a las ${bk.to}</div><div class="meta">${MN(mesa)} está en una pausa breve</div></div><div class="cd"><b data-end="${toMin(bk.to)*60}">${mmss(toMin(bk.to)*60-S.sec)}</b><span>para volver</span></div></div>`;
-    } else if(k&&k.status!=="finalizada"){
-      h+=`<div class="now wait"><div><div class="lbl">${k.calls?"LLAMADO "+k.calls+" DE 3":"ES TU TURNO"}</div><div class="who">${esc(k.name)}</div><div class="meta">Acércate a ${MN(mesa)}</div></div><div class="cd"><b data-end="${end}">${mmss(end-S.sec)}</b><span>tiempo disponible</span></div></div>`;
-    } else if(cs!==null&&secsLeft(day,mesa,cs)>=GRACE*60){
-      h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">Cupo libre</div><div class="meta">Tómalo en la tablet del stand</div></div><div class="cd"><b data-end="${end}">${mmss(end-S.sec)}</b><span>disponibles</span></div></div>`;
+      const bk2=breakNowC(mesa);
+      h+=`<div class="now free"><div><div class="lbl">☕ ${esc(bk2.label.toUpperCase())}</div><div class="who">Volvemos a las ${bk2.to}</div><div class="meta">${MN(mesa)} está en una pausa breve</div></div><div class="cd"><b data-end="${toMin(bk2.to)*60}">${mmss(toMin(bk2.to)*60-S.sec)}</b><span>para volver</span></div></div>`;
+    } else if(k){
+      const end=(k.start+bk(k))*60;
+      h+=`<div class="now wait"><div><div class="lbl">${k.calls?"LLAMADO "+k.calls+" DE 3":"ES TU TURNO"}</div><div class="who">${esc(k.name)}</div><div class="meta">Acércate a ${MN(mesa)} · con ${esc(m?m.name:"")}</div></div><div class="cd"><b data-end="${end}">${mmss(end-S.sec)}</b><span>tiempo disponible</span></div></div>`;
+    } else if(freeNow){
+      h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">Mesa libre</div><div class="meta">Reserva en la tablet del stand o acércate</div></div></div>`;
     } else {
-      const n=nowMin();
-      h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">${n<OPEN?"Abrimos a las 10:00":n>=CLOSE?"Mentorías finalizadas":"Mesa en pausa"}</div><div class="meta">${n<OPEN?"Ya puedes reservar en la tablet del stand":n>=CLOSE?"Gracias por participar":"Próximo turno en breve"}</div></div></div>`;
+      h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">${nowM<OPEN?"Abrimos a las 10:00":nowM>=CLOSE?"Mentorías finalizadas":"Mesa en pausa"}</div><div class="meta">${nowM<OPEN?"Ya puedes reservar en la tablet del stand":nowM>=CLOSE?"Gracias por participar":"Próximo turno en breve"}</div></div></div>`;
     }
-    const nexts=upcoming(day,mesa,act?null:cs).filter(b=>!(k&&b.id===k.id)).slice(0,3);
+    const nexts=upcoming(day,mesa,shown?shown.id:null).slice(0,3);
     h+=`<div class="next"><div class="lbl">PRÓXIMOS</div>`;
     if(!nexts.length)h+=`<div class="nrow"><span class="t">—</span><span class="n" style="color:#9fb2d4">Sin reservas próximas</span><span></span></div>`;
     for(const n of nexts){
-      const soon=n.start*60-S.sec<=GRACE*60||n.calls>0;const nm=mentorAt(day,mesa,n.start);
+      const soon=n.start*60-S.sec<=GRACE*60||n.calls>0;const nm=mentorOf(n);
       h+=`<div class="nrow${soon?" soon":""}"><span class="t">${fmt(n.start)}</span><span class="n">${esc(n.name)}<br><span class="m">con ${esc(nm?nm.name:"")}</span></span>${soon?`<span class="soonpill">${n.calls?"TE LLAMAN":"ACÉRCATE"}</span>`:"<span></span>"}</div>`;
     }
     h+=`</div></div>`;
@@ -2347,32 +2411,34 @@ function renderTV(){
 
 /* ---------- recepción ---------- */
 function durOpts(sel){let o="";for(let v=15;v<=60;v+=5)o+=`<option value="${v}"${v===+sel?" selected":""}>${v===60?"1 hora":v+" min"}</option>`;return o}
-function blockStats(b){const sl=slotsOf(b);const taken=sl.filter(t=>bookingAt(b.day,b.mesa,t)).length;return {n:sl.length,taken,free:sl.length-taken,d:durB(b)}}
+function blockStats(g){const sl=slotsOf(g),d=durB(g);const taken=sl.filter(t=>S.bookings.some(k=>k.day===g.day&&k.mid===g.mid&&k.start===t&&OCCUPIES(k))).length;return {n:sl.length,taken,free:sl.length-taken,d}}
 function mentorStats(mid){let n=0,taken=0;for(const g of S.grid)if(g.mid===mid){const x=blockStats(g);n+=x.n;taken+=x.taken}return {n,taken}}
+/* cupos reales por día: lo que cubren los mentores, con las 2 mesas como tope */
+function capDay(d){const iv=S.grid.filter(g=>g.day===d).map(g=>[toMin(g.from),toMin(g.to)]).sort((a,b)=>a[0]-b[0]);let tot=0,cur=null;for(const [f,t] of iv){if(!cur||f>cur[1]){if(cur)tot+=cur[1]-cur[0];cur=[f,t]}else cur[1]=Math.max(cur[1],t)}if(cur)tot+=cur[1]-cur[0];return Math.floor(tot*2/S.dur)}
 function nmPrevText(){const N=S.nm,f=toMin(N.from),t=toMin(N.to),d=+N.dur||S.dur;if(t<=f)return "Elige una hora de término posterior al inicio.";const n=Math.floor((t-f)/d);return `Con reuniones de ${d} min caben <b>${n}</b> reuniones por día (${N.from}–${N.to}).`+((t-f)%d?` Sobran ${(t-f)%d} min al final.`:"")}
 function timeOpts(sel){let o="";for(let t=OPEN;t<=CLOSE;t+=5){o+=`<option value="${fmt(t)}"${fmt(t)===sel?" selected":""}>${fmt(t)}</option>`}return o}
 /* ---------- métricas ---------- */
 function rng(seed){return ()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 function exampleData(){
   const r=rng(42),out=[],dayF=[.72,.9,.63],boost={10:-.15,12:.12,13:.18,17:.1,18:.14};
-  for(const d of [0,1,2])for(const mesa of [1,2])for(const b of blocks(d,mesa))for(const t of slotsOf(b)){
+  for(const d of [0,1,2])for(const b of S.grid.filter(g=>g.day===d))for(const t of slotsOf(b)){const mesa=1+Math.floor(t/20)%2;
     const p=Math.min(.97,dayF[d]+(boost[Math.floor(t/60)]||0));if(r()>p)continue;
     const advance=d>0&&r()<.2, x=r();
     const status=advance?(x<.24?"liberado":x<.38?"cancelada":"finalizada"):(x<.08?"liberado":x<.13?"cancelada":"finalizada");
     const y=r();
-    out.push({day:d,mesa,start:t,status,advance,source:status==="finalizada"&&!advance&&r()<.12?"mesa":"tablet",email:r()<.27,early:status==="finalizada"&&r()<.1,calls:status==="liberado"?3:status==="finalizada"?(y<.56?0:y<.86?1:2):0,mins:status==="finalizada"?Math.min(20,12+Math.floor(r()*10)):0});
+    out.push({day:d,mesa,mid:b.mid,start:t,status,advance,source:status==="finalizada"&&!advance&&r()<.12?"mesa":"tablet",email:r()<.27,early:status==="finalizada"&&r()<.1,calls:status==="liberado"?3:status==="finalizada"?(y<.56?0:y<.86?1:2):0,mins:status==="finalizada"?Math.min(20,12+Math.floor(r()*10)):0});
   }
   return out;
 }
-function liveData(){return S.bookings.map(b=>({day:b.day,mesa:b.mesa,start:b.start,status:b.status,advance:!!b.advance,source:b.source||"tablet",email:!!b.email,early:b.startedAt!=null&&b.startedAt<b.start*60,calls:b.calls||0,
-  mins:b.status==="enmesa"&&b.startedAt!=null?Math.max(0,(S.sec-b.startedAt)/60):b.status==="finalizada"?(b.startedAt!=null&&b.endedAt!=null?Math.max(0,(b.endedAt-b.startedAt)/60):durAt(b.day,b.mesa,b.start)):0}))}
+function liveData(){return S.bookings.map(b=>({day:b.day,mesa:b.mesa,mid:b.mid,start:b.start,status:b.status,advance:!!b.advance,source:b.source||"tablet",email:!!b.email,early:b.startedAt!=null&&b.startedAt<b.start*60,calls:b.calls||0,
+  mins:b.status==="enmesa"&&b.startedAt!=null?Math.max(0,(S.sec-b.startedAt)/60):b.status==="finalizada"?(b.startedAt!=null&&b.endedAt!=null?Math.max(0,(b.endedAt-b.startedAt)/60):bk(b)):0}))}
 const hm=m=>{m=Math.round(m);const h=Math.floor(m/60);return h?h+" h "+String(m%60).padStart(2,"0")+" min":m+" min"};
 const OUT=b=>b.status==="finalizada"||b.status==="enmesa"?"ok":b.status==="liberado"?"no":b.status==="cancelada"?"ca":"pend";
 const pct=(a,b)=>b?Math.round(a/b*100):0;
 function renderKPI(){
   const data=S.kpiSrc==="ejemplo"?exampleData():liveData();
   const tally=list=>{const t={ok:0,no:0,ca:0,pend:0,n:list.length};list.forEach(b=>t[OUT(b)]++);t.closed=t.ok+t.no+t.ca;return t};
-  const all=tally(data), cap=d=>[1,2].reduce((n,m)=>n+blocks(d,m).reduce((x,b)=>x+slotsOf(b).length,0),0), capAll=cap(0)+cap(1)+cap(2);
+  const all=tally(data), cap=capDay, capAll=cap(0)+cap(1)+cap(2);
   let h=`<div class="kx-src" role="group" aria-label="Origen de los datos">Datos: <button type="button" data-ks="ejemplo" aria-pressed="${S.kpiSrc==="ejemplo"}">Ejemplo al cierre de la feria</button><button type="button" data-ks="vivo" aria-pressed="${S.kpiSrc==="vivo"}">En vivo (demo)</button></div>`;
   h+=`<div class="kx-tiles">
     <div class="kx-t"><b>${all.n}</b><span>reservas en los 3 días</span></div>
@@ -2397,10 +2463,13 @@ function renderKPI(){
   }
   h+=`</div>`;
   /* por mentor */
-  const byM={};for(const b of data){const m=mentorAt(b.day,b.mesa,b.start);const k=m?m.name:"Sin mentor";(byM[k]=byM[k]||{name:k,spec:m?m.spec:"",list:[]}).list.push(b)}
+  const byM={};for(const b of data){const m=mentorOf(b);const k=m?m.name:"Sin mentor";(byM[k]=byM[k]||{name:k,spec:m?m.spec:"",list:[]}).list.push(b)}
   const assigned=name=>S.grid.filter(g=>mentorById(g.mid).name===name).reduce((a,g)=>a+Math.max(0,toMin(g.to)-toMin(g.from)),0);
   const ms=Object.values(byM).map(x=>{const worked=x.list.reduce((a,b)=>a+(b.mins||0),0),ok=x.list.filter(b=>OUT(b)==="ok").length;return {...x,t:tally(x.list),worked,asg:assigned(x.name),avg:ok?worked/ok:0}}).sort((a,b)=>b.t.ok-a.t.ok);
   const maxOk=Math.max(1,...ms.map(x=>x.t.ok)),maxW=Math.max(1,...ms.map(x=>x.worked));
+  const byC=TEMAS.map(tm=>({tm,t:tally(data.filter(b=>{const m=mentorOf(b);return m&&m.tema===tm}))}));
+  const maxC=Math.max(1,...byC.map(x=>x.t.ok));
+  h+=`<h3 class="kx-h">Por categoría</h3><p class="kx-sub">Qué categorías piden más los emprendedores.</p><div class="pl-wrap"><table class="kx"><thead><tr><th>Categoría</th><th>Realizadas</th><th class="r">Reservas</th><th class="r">No llegó</th><th class="r">Canceló</th><th class="r">Asistencia</th></tr></thead><tbody>${byC.map(x=>`<tr><td><b>${esc(x.tm)}</b></td><td><div class="hbar"><span style="width:${Math.round(x.t.ok/maxC*120)}px"></span><b>${x.t.ok}</b></div></td><td class="r">${x.t.n}</td><td class="r">${x.t.no}</td><td class="r">${x.t.ca}</td><td class="r"><b>${pct(x.t.ok,x.t.closed)}%</b></td></tr>`).join("")}</tbody></table></div>`;
   h+=`<h3 class="kx-h">Mentorías por mentor</h3><p class="kx-sub">Cuántas personas atendió cada mentor en los 3 días.</p><div class="pl-wrap"><table class="kx"><thead><tr><th>Mentor</th><th>Especialidad</th><th>Realizadas</th><th class="r">No llegó</th><th class="r">Canceló</th><th class="r">Asistencia</th></tr></thead><tbody>`;
   for(const x of ms)h+=`<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.spec)}</td><td><div class="hbar"><span style="width:${Math.round(x.t.ok/maxOk*120)}px"></span><b>${x.t.ok}</b></div></td><td class="r">${x.t.no}</td><td class="r">${x.t.ca}</td><td class="r"><b>${pct(x.t.ok,x.t.closed)}%</b></td></tr>`;
   h+=`</tbody></table></div>`;
@@ -2408,7 +2477,7 @@ function renderKPI(){
   for(const x of [...ms].sort((a,b)=>b.worked-a.worked))h+=`<tr><td><b>${esc(x.name)}</b></td><td><div class="hbar"><span style="width:${Math.round(x.worked/maxW*120)}px"></span><b>${hm(x.worked)}</b></div></td><td class="r">${x.asg?hm(x.asg):"—"}</td><td class="r"><b>${x.asg?pct(x.worked,x.asg)+"%":"—"}</b></td><td class="r">${x.avg?Math.round(x.avg)+" min":"—"}</td></tr>`;
   h+=`</tbody></table></div><p class="note" style="margin-top:6px">El tiempo asignado suma los bloques de la Parrilla en los 3 días.</p>`;
   /* horas */
-  const hrs=[10,11,12,13,14,15,16,17,18,19].map(hh=>data.filter(b=>Math.floor(b.start/60)===hh).length);
+  const hrs=Array.from({length:(CLOSE-OPEN)/60},(_,i)=>OPEN/60+i).map(hh=>data.filter(b=>Math.floor(b.start/60)===hh).length);
   const mx=Math.max(1,...hrs),pk=hrs.indexOf(Math.max(...hrs));
   h+=`<h3 class="kx-h">Reservas por hora</h3><p class="kx-sub">Hora con más demanda: <b>${10+pk}:00 a ${11+pk}:00</b> (${hrs[pk]} reservas en los 3 días). Pasa el dedo o el mouse sobre una barra para ver el número.</p>
     <div class="hours">${hrs.map((v,i)=>`<div class="col${i===pk?" peak":""}" title="${10+i}:00 – ${11+i}:00 · ${v} reservas"><em style="bottom:calc(${v/mx*100}% + 4px)">${i===pk?v:""}</em><div style="height:${v/mx*100}%"></div></div>`).join("")}</div>
@@ -2430,14 +2499,14 @@ function renderKPI(){
 function planoRows(){
   const f=S.pf,q=f.q.trim().toLowerCase();
   const rows=S.bookings.filter(b=>(f.all||ACTIVE(b))&&(f.day==="all"||b.day===+f.day)&&(f.mesa==="all"||b.mesa===+f.mesa))
-    .map(b=>({b,m:mentorAt(b.day,b.mesa,b.start)}))
+    .map(b=>({b,m:mentorOf(b)}))
     .filter(r=>!q||r.b.name.toLowerCase().includes(q)||(r.m&&r.m.name.toLowerCase().includes(q)))
     .sort((x,y)=>x.b.day-y.b.day||x.b.start-y.b.start||x.b.mesa-y.b.mesa);
   if(!rows.length)return `<p class="note">No hay reservas con estos filtros.</p>`;
   let h=`<table class="pl"><thead><tr><th>Hora</th><th>Mesa</th><th>Mentor</th><th>Participante</th><th>Estado</th></tr></thead><tbody>`;let d=-1;
   for(const {b,m} of rows){
     if(b.day!==d){d=b.day;const n=rows.filter(r=>r.b.day===d).length;h+=`<tr class="dayrow"><td colspan="5">${DAYS[d]}<small>${n} reserva${n===1?"":"s"}</small></td></tr>`}
-    h+=`<tr><td>${fmt(b.start)}–${fmt(b.start+durAt(b.day,b.mesa,b.start))}</td><td>${MN(b.mesa)}</td><td>${esc(m?m.name:"Sin mentor")}</td><td class="nm">${esc(b.name)}</td><td><span class="st ${b.status}">${STLAB[b.status]}</span></td></tr>`;
+    h+=`<tr><td>${fmt(b.start)}–${fmt(b.start+bk(b))}</td><td>${MN(b.mesa)}</td><td>${esc(m?m.name:"Sin mentor")}</td><td class="nm">${esc(b.name)}</td><td><span class="st ${b.status}">${STLAB[b.status]}</span></td></tr>`;
   }
   return h+`</tbody></table>`;
 }
@@ -2462,7 +2531,7 @@ function renderRecepcion(){
   else if(S.hostTab==="plano"){
     const act=S.bookings.filter(ACTIVE);
     const cnt=d=>act.filter(b=>b.day===d).length;
-    const cap=d=>[1,2].reduce((n,m)=>n+blocks(d,m).reduce((x,b)=>x+slotsOf(b).length,0),0);
+    const cap=capDay;
     h+=`<div class="pl-top">${[0,1,2].map(d=>`<div class="pl-kpi"><b>${cnt(d)} / ${cap(d)}</b><span>${DAYS[d]} · horarios tomados${d===S.day?" · hoy":""}</span></div>`).join("")}</div>
     <div class="pl-f">
       <select id="pfDay" aria-label="Filtrar por día"><option value="all">Los 3 días</option>${[0,1,2].map(d=>`<option value="${d}"${String(d)===S.pf.day?" selected":""}>${DAYS[d]}</option>`).join("")}</select>
@@ -2474,9 +2543,9 @@ function renderRecepcion(){
     <p class="note" style="margin-top:10px">${LIVE?"Este plano es la pestaña Reservas de la planilla de Google Sheets: se puede descargar o imprimir desde ahí.":"En la versión real este plano es la misma planilla de Google Sheets: se puede descargar o imprimir al final de cada día."}</p>`;
   } else if(S.hostTab==="turnos"){
     const srt=(a,b)=>a.start-b.start||a.mesa-b.mesa;
-    const isUp=b=>b.day===S.day&&(b.start+durAt(b.day,b.mesa,b.start))*60>S.sec&&b.status!=="finalizada"&&ACTIVE(b);
+    const isUp=b=>b.day===S.day&&(b.start+bk(b))*60>S.sec&&b.status!=="finalizada"&&ACTIVE(b);
     const delBtn=b=>`<button type="button" class="a-no${S.sureDel===b.id?" sure":""}" data-ra="del" data-id="${b.id}">${S.sureDel===b.id?"Toca otra vez para borrar":"🗑 Borrar"}</button>`;
-    const card=b=>{const m=mentorAt(b.day,b.mesa,b.start);const end=b.endsAt||(b.start+durAt(b.day,b.mesa,b.start))*60;
+    const card=b=>{const m=mentorOf(b);const end=b.endsAt||(b.start+bk(b))*60;
       const today=b.day===S.day;
       let acts="";
       const firstWaiting=today?upcoming(b.day,b.mesa,null)[0]:null;
@@ -2518,61 +2587,61 @@ function renderRecepcion(){
           <span id="pinMsg" class="note" role="status">${S.pinMsg||"PIN actual: ••••"}</span>
         </form>
       </div>
-      <div class="pg-card"><h3>Mentores del evento</h3><p class="note">Se escriben una sola vez. Después solo se eligen en la parrilla.</p>
-        ${S.mentors.map(m=>`<div class="mrow"><input data-mm="${m.id}" data-f="name" value="${esc(m.name)}" aria-label="Nombre del mentor"><input data-mm="${m.id}" data-f="spec" value="${esc(m.spec)}" aria-label="Cargo" placeholder="Cargo"><button type="button" class="del" data-delm="${m.id}" aria-label="Quitar mentor">✕</button></div><div class="mdays"><span class="dchip on" title="Reuniones posibles y reservadas en los días que participa">${(()=>{const x=mentorStats(m.id);return x.n+" reuniones · "+x.taken+" reservadas"})()}</span><select data-mm="${m.id}" data-f="tema" aria-label="Tema del mentor">${TEMAS.map(x=>`<option${x===m.tema?" selected":""}>${esc(x)}</option>`).join("")}</select>${[0,1,2].map(d=>{const bl=S.grid.filter(g=>g.mid===m.id&&g.day===d);return `<span class="dchip${bl.length?" on":""}" title="${bl.length?bl.map(b=>MNr(b.mesa)+" "+b.from+"–"+b.to).join(", "):"Sin bloques"}">${DAYS[d]}${bl.length?" · "+bl.map(b=>"M"+b.mesa+" "+b.from+"–"+b.to).join(", "):""}</span>`}).join("")}</div>`).join("")}
+      <div class="pg-card"><h3>Mentores del evento</h3><p class="note">Nombre, cargo y categoría de cada mentor. Los que no tienen bloques aún no reciben reservas: asígnales horario en la categoría correspondiente.</p>
+        ${[...S.mentors].sort((a,b)=>TEMAS.indexOf(a.tema)-TEMAS.indexOf(b.tema)||a.name.localeCompare(b.name)).map(m=>`<div class="mrow"><input data-mm="${m.id}" data-f="name" value="${esc(m.name)}" aria-label="Nombre del mentor"><input data-mm="${m.id}" data-f="spec" value="${esc(m.spec)}" aria-label="Cargo" placeholder="Cargo"><button type="button" class="del" data-delm="${m.id}" aria-label="Quitar mentor">✕</button></div><div class="mdays"><span class="dchip on" title="Reuniones posibles y reservadas en los días que participa">${(()=>{const x=mentorStats(m.id);return x.n+" reuniones · "+x.taken+" reservadas"})()}</span><select data-mm="${m.id}" data-f="tema" aria-label="Tema del mentor">${TEMAS.map(x=>`<option${x===m.tema?" selected":""}>${esc(x)}</option>`).join("")}</select>${[0,1,2].map(d=>{const bl=S.grid.filter(g=>g.mid===m.id&&g.day===d);return `<span class="dchip${bl.length?" on":""}" title="${bl.length?bl.map(b=>b.from+"–"+b.to).join(", "):"Sin bloques"}">${DAYS[d]}${bl.length?" · "+bl.map(b=>"M"+b.mesa+" "+b.from+"–"+b.to).join(", "):""}</span>`}).join("")}</div>`).join("")}
       </div>
       <div class="pg-card"><h3>Agregar mentor nuevo</h3>
-        <p class="note">Elige los días en que participa y su horario. Se crean sus bloques en la parrilla de cada día elegido.</p>
+        <p class="note">Elige los días en que participa y su horario (por ejemplo 10:00–13:00 para la mañana). Si no eliges días, queda en la lista sin bloques.</p>
         <form id="newMForm" style="display:grid;gap:8px">
           <input id="nmName" placeholder="Nombre del mentor" value="${esc(S.nm.name)}" aria-label="Nombre del mentor nuevo" autocomplete="off">
           <input id="nmSpec" placeholder="Cargo (ej. Gerente de Estaciones)" value="${esc(S.nm.spec)}" aria-label="Cargo del mentor nuevo" autocomplete="off">
           <select id="nmTema" aria-label="Tema del mentor nuevo">${TEMAS.map(x=>`<option${x===S.nm.tema?" selected":""}>${esc(x)}</option>`).join("")}</select>
           <div class="nmdays" role="group" aria-label="Días que participa">${[0,1,2].map(d=>`<label><input type="checkbox" class="nmDay" value="${d}" ${S.nm.days.includes(d)?"checked":""}> ${DAYS[d]}</label>`).join("")}</div>
-          <div class="brow" style="grid-template-columns:1fr 1fr 1fr"><select id="nmMesa" aria-label="Mesa"><option value="1"${S.nm.mesa===1?" selected":""}>${MN(1)}</option><option value="2"${S.nm.mesa===2?" selected":""}>${MN(2)}</option></select><select id="nmFrom" aria-label="Desde">${timeOpts(S.nm.from)}</select><select id="nmTo" aria-label="Hasta">${timeOpts(S.nm.to)}</select></div>
+          <div class="brow" style="grid-template-columns:1fr 1fr"><select id="nmFrom" aria-label="Desde">${timeOpts(S.nm.from)}</select><select id="nmTo" aria-label="Hasta">${timeOpts(S.nm.to)}</select></div>
           <div class="setting" style="margin:0"><label for="nmDur">Duración de cada reunión</label><select id="nmDur" style="width:auto">${durOpts(S.nm.dur)}</select></div>
           <p class="note" id="nmPrev">${nmPrevText()}</p>
-          <div class="nmdays" role="radiogroup" aria-label="Si el horario ya tiene mentor" style="flex-direction:column;gap:6px;font-size:14px">
-            <label><input type="radio" name="nmMode" value="take" ${S.nm.mode==="take"?"checked":""}> Si el horario ya tiene mentor, el nuevo lo toma y se ajusta el bloque del otro</label>
-            <label><input type="radio" name="nmMode" value="skip" ${S.nm.mode==="skip"?"checked":""}> Si el horario ya tiene mentor, no agregarlo ese día</label>
-          </div>
           <button type="submit" class="add" style="border-style:solid">+ Agregar mentor y sus bloques</button>
           ${S.nm.msg?`<p class="${S.nm.ok?"okmsg":"warn"}" role="status">${S.nm.msg}</p>`:""}
         </form>
       </div></div><div style="display:grid;gap:14px">`;
-    for(const mesa of [1,2]){
-      const bl=blocks(S.day,mesa);
-      const bad=new Set();for(let i=1;i<bl.length;i++)if(toMin(bl[i].from)<toMin(bl[i-1].to)){bad.add(bl[i].id);bad.add(bl[i-1].id)}
-      bl.forEach(b=>{if(toMin(b.to)<=toMin(b.from))bad.add(b.id)});
-      const gaps=[];let cur=OPEN;for(const b of bl){if(toMin(b.from)>cur)gaps.push(fmt(cur)+"–"+b.from);cur=Math.max(cur,toMin(b.to))}if(cur<CLOSE)gaps.push(fmt(cur)+"–"+fmt(CLOSE));
-      const pct=t=>(t-OPEN)/(CLOSE-OPEN)*100;
-      h+=`<div class="pg-card"><h3>${MN(mesa)} · ${DAYS[S.day]}</h3>
-        <div class="tl" aria-hidden="true">${bl.map((b,i)=>`<div class="b${i%2?" alt":""}${bad.has(b.id)?" bad":""}" style="left:${pct(toMin(b.from))}%;width:${Math.max(0,pct(toMin(b.to))-pct(toMin(b.from)))}%">${esc(mentorById(b.mid).name.split(" ")[0])}<br>${b.from}–${b.to}</div>`).join("")}</div>
-        <div class="ticks"><span>10:00</span><span>12:00</span><span>14:00</span><span>16:00</span><span>18:00</span><span>20:00</span></div>
-        <div class="brow"><span class="lab">Mentor</span><span class="lab">Desde</span><span class="lab">Hasta</span><span class="lab">Cada reunión</span><span></span></div>
-        ${bl.map(b=>`<div class="brow"><select data-g="${b.id}" data-f="mid" aria-label="Mentor">${S.mentors.map(m=>`<option value="${m.id}"${m.id===b.mid?" selected":""}>${esc(m.name)}</option>`).join("")}</select><select data-g="${b.id}" data-f="from" aria-label="Desde">${timeOpts(b.from)}</select><select data-g="${b.id}" data-f="to" aria-label="Hasta">${timeOpts(b.to)}</select><select data-g="${b.id}" data-f="dur" aria-label="Duración de cada reunión">${durOpts(durB(b))}</select><button type="button" class="del" data-delg="${b.id}" aria-label="Quitar bloque">✕</button></div>${(()=>{const x=blockStats(b);const m=mentorById(b.mid);return `<div class="bcount"><b>${x.n}</b> reuniones de ${x.d} min para ${esc(m?m.name:"")} · <b>${x.taken}</b> reservadas · ${x.free?`<b>${x.free}</b> libres`:`<span class="full">completo</span>`}</div>`})()}`).join("")}
-        ${bad.size?`<p class="warn">Hay bloques que se cruzan (en rojo). Corrige las horas.</p>`:gaps.length?`<p class="note">Sin mentor: ${gaps.join(", ")}</p>`:`<p class="okmsg">Mesa cubierta de 10:00 a 20:00</p>`}
-        <button type="button" class="add" data-addg="${mesa}">+ Agregar bloque</button>
-        <div class="sec-t" style="margin-top:14px">☕ Descansos programados (comida, baño, pausa)</div>
-        ${breaksOf(S.day,mesa).map(x=>`<div class="brkrow"><span>☕ <b>${esc(x.label)}</b> · ${x.from}–${x.to}</span><button type="button" class="del" data-brkdel="${x.id}" aria-label="Quitar descanso">✕</button></div>`).join("")||`<p class="note">Sin descansos programados. En ese horario la mesa no recibe reservas nuevas.</p>`}
-        <div class="brow" style="grid-template-columns:1fr 1fr 1fr auto;margin-top:6px"><select id="brkL${mesa}" aria-label="Motivo">${["Almuerzo","Baño","Descanso","Colación"].map(x=>`<option>${x}</option>`).join("")}</select><select id="brkF${mesa}" aria-label="Desde">${timeOpts("13:00")}</select><select id="brkT${mesa}" aria-label="Hasta">${timeOpts("13:30")}</select><button type="button" class="add" data-brkadd="${mesa}" style="margin:0">+ Agregar</button></div>
-      </div>`;
-    }
-    h+=`<button type="button" class="add" id="copyDay">Copiar la parrilla de ${DAYS[S.day]} a los otros días</button>
-      <p class="note">Las reservas quedan amarradas a mesa + hora. Si cambias el mentor de un bloque, la tablet, la pantalla y la tablet del mentor muestran el nombre nuevo al instante.</p></div></div>`;
+    const R=CR(), inBq=(m,bq)=>blocksOfMentor(S.day,m.id).some(g=>toMin(g.from)<bq[2]&&toMin(g.to)>bq[1]);
+    const cov=BLOQS.map(bq=>{const per=TEMAS.map(tm=>R.mentorsOf(tm).filter(m=>inBq(m,bq))),tot=per.reduce((a,l)=>a+l.length,0),cats=per.filter(l=>l.length).length;
+      const est=tot===0?["Sin mentores","off"]:tot>=4?["Sobrecarga (+"+(tot-2)+")","hi"]:(tot>=2&&cats>=2)?["Cubierto","ok"]:["Frágil","lo"];return {bq,per,est}});
+    h+=`<div class="pg-card"><h3>Cobertura · ${DAYS[S.day]}</h3><div class="pl-wrap"><table class="kx cov"><thead><tr><th>Bloque</th>${TEMAS.map(t=>`<th>${esc(t)}</th>`).join("")}<th>Estado</th></tr></thead><tbody>${cov.map(c=>`<tr><td><b>${c.bq[0]}</b><br><small>${fmt(c.bq[1])}–${fmt(c.bq[2])}</small></td>${c.per.map(l=>`<td>${l.length?l.map(m=>esc(m.name)).join("<br>"):"—"}</td>`).join("")}<td><span class="est ${c.est[1]}">${c.est[0]}</span></td></tr>`).join("")}</tbody></table></div>
+      <p class="note">Cubierto: 2 o 3 mentores en el bloque · Frágil: 1 mentor o 1 sola categoría · Sobrecarga: 4 o más mentores para las 2 mesas. Las 2 mesas se comparten: atienden a quien tenga reserva, de cualquier categoría.</p></div>`;
+    TEMAS.forEach((tm,ti)=>{
+      const ms=S.mentors.filter(m=>m.tema===tm).sort((a,b)=>a.name.localeCompare(b.name));
+      const rows=ms.flatMap(m=>blocksOfMentor(S.day,m.id)).sort((a,b)=>toMin(a.from)-toMin(b.from)||mentorById(a.mid).name.localeCompare(mentorById(b.mid).name));
+      h+=`<div class="pg-card"><h3>${esc(tm)} · ${DAYS[S.day]}</h3>`;
+      if(rows.length)h+=`<div class="brow"><span class="lab">Mentor</span><span class="lab">Desde</span><span class="lab">Hasta</span><span class="lab">Cada reunión</span><span></span></div>`;
+      h+=rows.map(b=>{const x=blockStats(b);const m=mentorById(b.mid);
+        return `<div class="brow"><select data-g="${b.id}" data-f="mid" aria-label="Mentor">${ms.map(o=>`<option value="${o.id}"${o.id===b.mid?" selected":""}>${esc(o.name)}</option>`).join("")}</select><select data-g="${b.id}" data-f="from" aria-label="Desde">${timeOpts(b.from)}</select><select data-g="${b.id}" data-f="to" aria-label="Hasta">${timeOpts(b.to)}</select><select data-g="${b.id}" data-f="dur" aria-label="Duración de cada reunión">${durOpts(durB(b))}</select><button type="button" class="del" data-delg="${b.id}" aria-label="Quitar bloque">✕</button></div><div class="bcount"><b>${x.n}</b> reuniones de ${x.d} min para ${esc(m.name)}${m.spec?" ("+esc(m.spec)+")":""} · <b>${x.taken}</b> reservadas · ${x.free?`<b>${x.free}</b> libres`:`<span class="full">completo</span>`}</div>`}).join("");
+      if(!rows.length)h+=`<p class="note">Ningún mentor de esta categoría atiende este día.</p>`;
+      h+=ms.length?`<div class="brow" style="grid-template-columns:1fr auto;margin-top:6px"><select id="addgM${ti}" aria-label="Mentor a agregar">${ms.map(o=>`<option value="${o.id}">${esc(o.name)}</option>`).join("")}</select><button type="button" class="add" data-addg="${ti}" style="margin:0">+ Agregar bloque</button></div>`:`<p class="note">Aún no hay mentores en esta categoría. Agrégalos abajo en «Agregar mentor nuevo».</p>`;
+      h+=`</div>`;
+    });
+    const withB=S.mentors.filter(m=>blocksOfMentor(S.day,m.id).length).sort((a,b)=>a.name.localeCompare(b.name));
+    const brks=(S.breaks||[]).filter(x=>x.day===S.day&&x.mid).sort((a,b)=>toMin(a.from)-toMin(b.from));
+    h+=`<div class="pg-card"><h3>☕ Descansos programados · ${DAYS[S.day]}</h3><p class="note">Comida, baño o pausa de un mentor. En ese horario no se le asignan reservas nuevas. Para una pausa de último minuto, usa «Pausar la mesa» en la tablet de la mesa o en Producción.</p>
+      ${brks.map(x=>`<div class="brkrow"><span>☕ <b>${esc(mentorById(x.mid).name)}</b> · ${esc(x.label)} · ${x.from}–${x.to}</span><button type="button" class="del" data-brkdel="${x.id}" aria-label="Quitar descanso">✕</button></div>`).join("")||`<p class="note">Sin descansos programados.</p>`}
+      ${withB.length?`<div class="brow" style="grid-template-columns:1.4fr 1fr 1fr 1fr auto;margin-top:6px"><select id="brkM" aria-label="Mentor">${withB.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select><select id="brkL" aria-label="Motivo">${["Almuerzo","Baño","Descanso","Colación"].map(x=>`<option>${x}</option>`).join("")}</select><select id="brkF" aria-label="Desde">${timeOpts("13:00")}</select><select id="brkT" aria-label="Hasta">${timeOpts("13:30")}</select><button type="button" class="add" data-brkadd="1" style="margin:0">+ Agregar</button></div>`:""}
+    </div>`;
+    h+=`<button type="button" class="add" id="copyDay">Copiar la disponibilidad de ${DAYS[S.day]} a los otros días</button>
+      <p class="note">Cada reserva queda amarrada a un mentor y una hora. Los nombres que cambies aquí se ven al instante en la tablet, el visor y las tablets de las mesas.</p></div></div>`;
   }
   el.innerHTML=h;
 }
 
 /* ---------- general ---------- */
 const HINTS={
-  tablet:"Tablet de la anfitriona: aquí reserva por la persona (o se la pasa), y en Recepción y Parrilla ayuda al mentor. Reserva un horario de prueba. Los cupos que ya empezaron pero tienen al menos 5 min libres aparecen como AHORA.",
+  tablet:"Tablet de la anfitriona: aquí reserva por la persona (o se la pasa), y en Recepción y Parrilla ayuda al mentor. Elige categoría y hora; el sistema asigna mentor y mesa. Los horarios que ya empezaron pero tienen al menos 5 min libres aparecen como AHORA.",
   mentor:"Tablet del mentor (una por mesa): llama a la persona, márcala al llegar y controla el tiempo. Si la mesa queda libre, puede adelantar al siguiente. Con 3 llamados y 5 min de espera se activa \"Liberar cupo\".",
-  pantalla:"Cuando un mentor llama a alguien, su nombre aparece en grande por unos segundos. En la feria el reloj usa la hora real de Santiago; fuera de 10:00 a 20:00 muestra que está cerrada.",
+  pantalla:"Cuando un mentor llama a alguien, su nombre aparece en grande por unos segundos. En la feria el reloj usa la hora real de Santiago; fuera de 10:00 a 19:00 muestra que está cerrada.",
   turnos:"Recepción: la anfitriona marca quién llegó al stand, puede llamarlo a la pantalla para ayudar al mentor y cancelar una reserva.",
   pin:"Recepción y Parrilla piden PIN (demo: 1234). Al volver a \"Nueva reserva\" la tablet se bloquea sola, así la anfitriona puede pasársela al público sin riesgo.",
   kpi:"Métricas: resultados por día, por mentor, horas con más demanda y comportamiento del público. Cambia entre el ejemplo al cierre de la feria y los datos en vivo de la demo.",
   plano:"Plano general: todas las reservas de los 3 días con hora, mesa, mentor, nombre y estado. Se puede filtrar por día, mesa o buscar un nombre.",
-  parrilla:"Parrilla: el día se arma eligiendo de listas, sin escribir horas. La barra muestra en rojo los bloques que se cruzan."
+  parrilla:"Parrilla: cada categoría muestra a sus mentores, su horario y cuántas reuniones tienen reservadas. Todo se edita eligiendo de listas."
 };
 function renderAll(){
   document.querySelectorAll(".views a").forEach(a=>a.setAttribute("aria-current",a.dataset.v===S.view?"page":"false"));
@@ -2602,8 +2671,7 @@ function route(){
     else if(v==="mentor-1"||v==="mentor-2"){S.view="mentor";S.mt=+v.slice(-1);if(!S.pinValue){try{S.pinValue=localStorage.getItem("mentorias_pin")}catch(e){}}}
     else if(v==="pantalla")S.view="pantalla";
     else if(v==="produccion"){S.view="tablet";S.prodMode=true;S.hostTab="pin";S.pinTarget="live";S.pinIn="";S.pinErr="";
-      let sp=null;try{sp=localStorage.getItem("mentorias_pin")}catch(e){}
-      if(sp){S.pinBusy=true;act("checkPin",{},sp).then(r=>{S.pinBusy=false;if(r.ok){S.pinValue=sp;S.unlocked=true;S.hostTab="live";prodFetch()}else{try{localStorage.removeItem("mentorias_pin")}catch(e){}}renderAll()})}}
+      S.pinValue=null;S.unlocked=false}
     else S.view="home";
     S.sure=null;if(v!=="produccion")S.prodMode=false;renderAll();return}
   let v=(location.hash||"#tablet").slice(1);if(v==="recepcion"){v="tablet";S.hostTab=S.unlocked?"turnos":"pin";S.pinTarget="turnos"}S.view=["tablet","mentor","pantalla"].includes(v)?v:"tablet";S.sure=null;renderAll()}
@@ -2631,12 +2699,12 @@ function renderProd(){
     return `<div class="${cl}"><b>${esc(rolNom(r))}</b><span>${tx}</span></div>`}).join("");
   let h=`<div class="prod-eq">${eq}</div><div class="prod-links"><a href="#mentor-1" data-fp="1">Abrir ${MN(1)}</a><a href="#mentor-2" data-fp="1">Abrir ${MN(2)}</a><a href="#pantalla" data-fp="1">Abrir visor</a></div><div class="prod-mesas">`;
   for(const mesa of [1,2]){
-    const cs=curSlot(S.day,mesa),act=activeSession(S.day,mesa),m=mentorAt(S.day,mesa,cs!==null?cs:nowMin());
-    const wait=S.bookings.filter(b=>b.day===S.day&&b.mesa===mesa&&WAITING(b)&&(b.start+durAt(b.day,b.mesa,b.start))*60>S.sec).sort((a,b)=>a.start-b.start);
-    h+=`<div class="pg-card"><h3>${MN(mesa)}${m?" · "+esc(m.name):""}</h3>${breakCtl(mesa)}<p class="note">${m?esc(m.spec)+" · "+esc(m.tema||""):"Sin mentor en este horario"}</p>`;
+    const act=activeSession(S.day,mesa),cb=curBooking(S.day,mesa),m=mentorOf(act||(cb&&cb.status!=="finalizada"?cb:null));
+    const wait=S.bookings.filter(b=>b.day===S.day&&b.mesa===mesa&&WAITING(b)&&(b.start+bk(b))*60>S.sec).sort((a,b)=>a.start-b.start);
+    h+=`<div class="pg-card"><h3>${MN(mesa)}${m?" · "+esc(m.name):""}</h3>${breakCtl(mesa)}<p class="note">${m?esc(m.spec)+" · "+esc(m.tema||""):"Sin reserva en este momento"}</p>`;
     if(act){const left=act.endsAt-S.sec;h+=`<div class="big">${esc(act.name)}</div><p>En mentoría · quedan <b class="tnum" data-end="${act.endsAt}">${mmss(left)}</b></p><button type="button" class="a-no" data-pa="finish" data-id="${act.id}">Terminar sesión</button>`}
     else h+=`<p class="big" style="color:var(--muted)">Mesa libre</p>`;
-    h+=`<div class="sec-t">En espera (${wait.length})</div>`+(wait.length?wait.slice(0,4).map(b=>`<div class="m" style="margin:6px 0">${fmt(b.start)} · <b>${esc(b.name)}</b> · ${STLAB[b.status]}${b.calls?" · "+b.calls+" llamado(s)":""} <button type="button" class="a-no" data-pa="call" data-id="${b.id}">📣 Llamar</button>${!act?` <button type="button" class="a-ok" data-pa="start" data-id="${b.id}">Iniciar</button>`:""}</div>`).join(""):`<p class="note">Nadie esperando.</p>`)+`</div>`}
+    h+=`<div class="sec-t">En espera (${wait.length})</div>`+(wait.length?wait.slice(0,4).map(b=>`<div class="m" style="margin:6px 0">${fmt(b.start)} · <b>${esc(b.name)}</b> · con ${esc((mentorOf(b)||{}).name||"")} · ${STLAB[b.status]}${b.calls?" · "+b.calls+" llamado(s)":""} <button type="button" class="a-no" data-pa="call" data-id="${b.id}">📣 Llamar</button>${!act?` <button type="button" class="a-ok" data-pa="start" data-id="${b.id}">Iniciar</button>`:""}</div>`).join(""):`<p class="note">Nadie esperando.</p>`)+`</div>`}
   h+=`</div>`;
   const lc=S.lastCall||null;
   h+=`<div class="pg-card"><h3>Visor</h3><p class="note">${lc?`Último llamado: <b>${esc(lc.name)}</b> a ${MN(lc.mesa)} · ${lc.calls} llamado(s) · ${hhmmss(lc.at)}`:"Todavía no hay llamados."}</p></div>`;
@@ -2669,7 +2737,7 @@ setInterval(()=>{
 },1000);
 
 if(LIVE){document.body.classList.add("full","live");poll();setInterval(poll,3500);setInterval(()=>{if(S.view==="pantalla"&&!document.hidden)poll()},1500)}else syncDemo();
-if(DEMO){document.getElementById("clockLab").textContent="Modo presentación · hora simulada:";document.getElementById("clockLab").title="Fuera del horario de la feria el prototipo simula que son las 15:10. Entre 10:00 y 20:00 usa la hora real de Santiago."}
+if(DEMO){document.getElementById("clockLab").textContent="Modo presentación · hora simulada:";document.getElementById("clockLab").title="Fuera del horario de la feria el prototipo simula que son las 15:10. Entre 10:00 y 19:00 usa la hora real de Santiago."}
 function setFull(on){document.body.classList.toggle("full",on);try{if(on&&document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});if(!on&&document.fullscreenElement)document.exitFullscreen().catch(()=>{})}catch(e){}renderAll()}
 document.getElementById("goFull").addEventListener("click",()=>setFull(true));
 document.getElementById("exitFull").addEventListener("click",()=>setFull(false));
@@ -2687,7 +2755,7 @@ tb.addEventListener("click",e=>{
   const T=S.tab;
   const d=e.target.closest("[data-day]");if(d){T.day=+d.dataset.day;renderTablet();return}
   const tm=e.target.closest("[data-tema]");if(tm){T.tema=tm.dataset.tema;renderTablet();return}
-  const s=e.target.closest(".slot");if(s&&!s.disabled){T.mesa=+s.dataset.mesa;T.start=+s.dataset.t;T.step="form";renderTablet();setTimeout(()=>{const f=document.getElementById("fFirst");f&&f.focus()},30);return}
+  const s=e.target.closest(".slot");if(s&&!s.disabled){T.bTema=s.dataset.stema;T.start=+s.dataset.t;T.step="form";renderTablet();setTimeout(()=>{const f=document.getElementById("fFirst");f&&f.focus()},30);return}
   if(e.target.closest("#back")){T.step="pick";renderTablet();return}
   if(e.target.closest("#finish")){resetTablet();return}
 });
@@ -2704,7 +2772,7 @@ tb.addEventListener("submit",async e=>{
   if(e.target.id!=="bookForm")return;
   e.preventDefault();const T=S.tab;if(S.pending)return;
   const btn=document.getElementById("confirm");if(btn){btn.disabled=true;btn.textContent="Reservando…"}
-  const r=await act("book",{day:T.day,mesa:T.mesa,start:T.start,first:T.first,ini:T.ini,email:T.email,consent:T.ok});
+  const r=await act("book",{day:T.day,tema:T.bTema,start:T.start,first:T.first,ini:T.ini,email:T.email,consent:T.ok});
   if(!r.ok){toast(r.msg);T.step="pick";renderTablet();return}
   S.booked=r.data;T.step="done";T.count=60;document.activeElement&&document.activeElement.blur();renderTablet();
 });
@@ -2729,7 +2797,7 @@ mb.addEventListener("submit",async e=>{
   e.preventDefault();if(S.pending)return;
   const f=document.getElementById("wFirst").value.trim(),i=document.getElementById("wIni").value.trim();
   if(f.length<2){toast("Escribe el nombre.");return}
-  const r=await act("walkin",{mesa:S.mt,first:f,ini:i});if(!r.ok)toast(r.msg);
+  const wm=document.getElementById("wMid");const r=await act("walkin",{mesa:S.mt,first:f,ini:i,mid:wm?+wm.value:0});if(!r.ok)toast(r.msg);
   document.activeElement&&document.activeElement.blur();renderMentor();
 });
 
@@ -2744,33 +2812,10 @@ document.getElementById("tabSub").addEventListener("click",e=>{if(e.target.close
 tb.addEventListener("input",e=>{const t=e.target;if(t.id==="nmName")S.nm.name=t.value;if(t.id==="nmSpec")S.nm.spec=t.value});
 tb.addEventListener("change",e=>{const t=e.target;
   if(t.classList&&t.classList.contains("nmDay")){S.nm.days=[...document.querySelectorAll(".nmDay:checked")].map(x=>+x.value)}
-  if(t.name==="nmMode")S.nm.mode=t.value;
-  if(t.id==="nmTema")S.nm.tema=t.value;if(t.id==="nmMesa")S.nm.mesa=+t.value;if(t.id==="nmFrom")S.nm.from=t.value;if(t.id==="nmTo")S.nm.to=t.value;if(t.id==="nmDur")S.nm.dur=+t.value;if(/^nm(From|To|Dur)$/.test(t.id||"")){const p=document.getElementById("nmPrev");if(p)p.innerHTML=nmPrevText()}});
+  if(t.id==="nmTema")S.nm.tema=t.value;if(t.id==="nmFrom")S.nm.from=t.value;if(t.id==="nmTo")S.nm.to=t.value;if(t.id==="nmDur")S.nm.dur=+t.value;if(/^nm(From|To|Dur)$/.test(t.id||"")){const p=document.getElementById("nmPrev");if(p)p.innerHTML=nmPrevText()}});
 tb.addEventListener("submit",async e=>{if(e.target.id!=="newMForm")return;e.preventDefault();e.stopImmediatePropagation();if(S.pending)return;
-  const N=S.nm;const r=await act("mentorAdd",{name:N.name,spec:N.spec,tema:N.tema,days:N.days,mesa:N.mesa,from:N.from,to:N.to,dur:N.dur,mode:N.mode});
+  const N=S.nm;const r=await act("mentorAdd",{name:N.name,spec:N.spec,tema:N.tema,days:N.days,from:N.from,to:N.to,dur:N.dur});
   N.ok=!!(r.ok&&r.data&&r.data.added);N.msg=esc(r.msg||"");if(r.ok&&N.ok){N.name="";N.spec=""}
-  document.activeElement&&document.activeElement.blur();renderTablet()},true);
-tb.addEventListener("submit",e=>{if(e.target.id!=="__old_newMForm")return;
-  const N=S.nm,name=N.name.trim(),f=toMin(N.from),t=toMin(N.to);N.ok=false;
-  if(name.length<2)N.msg="Escribe el nombre del mentor.";
-  else if(!N.days.length)N.msg="Elige al menos un día.";
-  else if(t<=f)N.msg="La hora de término debe ser después de la de inicio.";
-  else{
-    const id=++uid;S.mentors.push({id,name,spec:N.spec.trim()||"Especialidad"});
-    const ok=[],bad=[],adj=[];
-    for(const d of N.days){const clashes=blocks(d,N.mesa).filter(b=>f<toMin(b.to)&&t>toMin(b.from));
-      if(clashes.length&&N.mode==="skip"){bad.push(DAYS[d]+" (se cruza con "+mentorById(clashes[0].mid).name+" "+clashes[0].from+"–"+clashes[0].to+")");continue}
-      /* el mentor nuevo toma el horario: se recorta, divide o quita el bloque del otro mentor */
-      for(const b of clashes){const bf=toMin(b.from),bt=toMin(b.to),who=mentorById(b.mid).name;
-        if(bf>=f&&bt<=t){S.grid=S.grid.filter(g=>g!==b);adj.push(DAYS[d]+": "+who+" sale de "+b.from+"–"+b.to)}
-        else if(bf<f&&bt>t){S.grid.push({id:++uid,day:d,mesa:b.mesa,mid:b.mid,from:N.to,to:b.to});b.to=N.from;adj.push(DAYS[d]+": "+who+" queda "+b.from+"–"+N.from+" y "+N.to+"–"+fmt(bt))}
-        else if(bf<f){b.to=N.from;adj.push(DAYS[d]+": "+who+" queda "+b.from+"–"+b.to)}
-        else{b.from=N.to;adj.push(DAYS[d]+": "+who+" queda "+b.from+"–"+b.to)}}
-      S.grid.push({id:++uid,day:d,mesa:N.mesa,mid:id,from:N.from,to:N.to});ok.push(DAYS[d])}
-    N.ok=ok.length>0;
-    N.msg=(ok.length?esc(name)+" agregado en Mesa "+N.mesa+", "+N.from+"–"+N.to+": "+ok.join(", ")+".":esc(name)+" quedó en la lista de mentores, sin bloques.")+(adj.length?" Ajustes: "+esc(adj.join("; "))+".":"")+(bad.length?" No se agregó en "+bad.join("; ")+". Ajusta la hora o la mesa en esos días.":"");
-    if(ok.length){N.name="";N.spec=""}
-  }
   document.activeElement&&document.activeElement.blur();renderTablet()},true);
 tb.addEventListener("submit",async e=>{if(e.target.id!=="pinForm")return;e.preventDefault();e.stopImmediatePropagation();if(S.pending)return;
   const a=document.getElementById("pinNew").value.trim(),b=document.getElementById("pinNew2").value.trim();
@@ -2788,7 +2833,7 @@ tb.addEventListener("click",e=>{const k=e.target.closest("[data-pin]");if(!k||S.
   if(v==="b")S.pinIn=S.pinIn.slice(0,-1);else if(S.pinIn.length<4)S.pinIn+=v;
   S.pinErr="";
   if(S.pinIn.length===4){const pin=S.pinIn;S.pinBusy=true;renderPin();S.pinIn="";
-    act("checkPin",{},pin).then(r=>{S.pinBusy=false;if(r.ok){S.pinValue=pin;S.unlocked=true;S.hostTab=S.pinTarget;if(S.prodMode){try{localStorage.setItem("mentorias_pin",pin)}catch(e){}prodFetch()}renderAll()}else{S.pinErr=r.auth===false?"PIN incorrecto, intenta de nuevo":r.msg;renderPin()}});return}
+    act("checkPin",{},pin).then(r=>{S.pinBusy=false;if(r.ok){S.pinValue=pin;S.unlocked=true;S.hostTab=S.pinTarget;if(S.prodMode)prodFetch();renderAll()}else{S.pinErr=r.auth===false?"PIN incorrecto, intenta de nuevo":r.msg;renderPin()}});return}
   renderPin()});
 const rb=tb;
 async function staff(action,payload,okMsg){if(S.pending)return null;const r=await act(action,payload);if(!r.ok)toast(r.msg);else if(okMsg||r.msg)toast(okMsg||r.msg);if(S.view==="tablet"&&S.hostTab==="live")renderProd();else if(S.view==="tablet"&&S.hostTab!=="reserva"&&S.hostTab!=="pin")renderRecepcion();return r}
@@ -2806,7 +2851,7 @@ rb.addEventListener("click",e=>{
   if(e.target.closest("#swDays")){staff("setCfg",{key:"allowOtherDays",value:!S.allowOtherDays});return}
   const dg=e.target.closest("[data-delg]");if(dg){staff("gridDel",{id:+dg.dataset.delg});return}
   const dm=e.target.closest("[data-delm]");if(dm){staff("mentorDel",{id:+dm.dataset.delm});return}
-  const ag=e.target.closest("[data-addg]");if(ag){staff("gridAdd",{day:S.day,mesa:+ag.dataset.addg});return}
+  const ag=e.target.closest("[data-addg]");if(ag){const sel=document.getElementById("addgM"+ag.dataset.addg);staff("gridAdd",{day:S.day,mid:sel?+sel.value:0});return}
   if(e.target.closest("#copyDay")){staff("copyDay",{day:S.day});return}
 });
 rb.addEventListener("change",e=>{
@@ -2825,7 +2870,7 @@ document.addEventListener("click",async e=>{
     const r=bt.dataset.brk==="end"?await act("breakEnd",{mesa}):await act("breakNow",{mesa,mins:+box.querySelector("[data-brkm]").value,label:box.querySelector("[data-brkl]").value});
     toast(r.ok?(r.msg||"Listo"):r.msg);lastBanner=bannerOn();if(S.view==="tablet"&&S.hostTab==="live")prodFetch();renderAll();return}
   const ba=e.target.closest("[data-brkadd]");
-  if(ba){const m=+ba.dataset.brkadd;staff("breakAdd",{day:S.day,mesa:m,from:document.getElementById("brkF"+m).value,to:document.getElementById("brkT"+m).value,label:document.getElementById("brkL"+m).value});return}
+  if(ba){staff("breakAdd",{day:S.day,mid:+document.getElementById("brkM").value,from:document.getElementById("brkF").value,to:document.getElementById("brkT").value,label:document.getElementById("brkL").value});return}
   const bd=e.target.closest("[data-brkdel]");if(bd){staff("breakDel",{id:+bd.dataset.brkdel});return}
 });
 document.addEventListener("change",e=>{const t=e.target;if(t.dataset&&t.dataset.mname){t.blur();staff("setCfg",{key:"mesaName",i:+t.dataset.mname,value:t.value})}});
