@@ -51,9 +51,9 @@ main{max-width:480px;margin:0 auto;padding:18px 16px 32px;display:grid;gap:14px}
   var fecha=new Date(p.d+"T12:00:00");
   var fechaTxt=fecha.toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long"});
   var ymd=p.d.replace(/-/g,""), t1=p.h.replace(":","")+"00", t2=hFin.replace(":","")+"00";
-  var titulo="Mentoría Copec con "+(p.m||"mentor")+" · Mesa "+p.mesa;
+  var titulo="Mentoría Copec con "+(p.m||"mentor")+" · "+(p.mn||"Mesa "+p.mesa);
   var lugar=p.u||"Stand Copec, feria Emprende tu Mente";
-  var gcal="https://calendar.google.com/calendar/render?"+new URLSearchParams({action:"TEMPLATE",text:titulo,dates:ymd+"T"+t1+"/"+ymd+"T"+t2,ctz:"America/Santiago",details:(p.t?"Tema: "+p.t+". ":"")+"Mentor: "+(p.m||"")+(p.s?" ("+p.s+")":"")+". Mesa "+p.mesa+". Llega 5 minutos antes.",location:lugar}).toString();
+  var gcal="https://calendar.google.com/calendar/render?"+new URLSearchParams({action:"TEMPLATE",text:titulo,dates:ymd+"T"+t1+"/"+ymd+"T"+t2,ctz:"America/Santiago",details:(p.t?"Tema: "+p.t+". ":"")+"Mentor: "+(p.m||"")+(p.s?" ("+p.s+")":"")+". "+(p.mn||"Mesa "+p.mesa)+". Llega 5 minutos antes.",location:lugar}).toString();
   var ics=CFG.api&&p.id&&p.tk?CFG.api+"?action=ics&id="+encodeURIComponent(p.id)+"&tk="+encodeURIComponent(p.tk):"";
   var ios=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
   var bIcs=ics?'<a class="btn primary" href="'+esc(ics)+'">Agregar a mi calendario (con avisos)</a>':"";
@@ -63,7 +63,7 @@ main{max-width:480px;margin:0 auto;padding:18px 16px 32px;display:grid;gap:14px}
     '<div class="row"><span>Mentor</span><b>'+esc(p.m||"Por confirmar")+(p.s?'<br><span style="font-weight:500">'+esc(p.s)+'</span>':"")+'</b></div>'+
     '<div class="row"><span>Día</span><b>'+esc(fechaTxt.charAt(0).toUpperCase()+fechaTxt.slice(1))+'</b></div>'+
     '<div class="row"><span>Hora</span><b>'+esc(p.h)+' – '+esc(hFin)+'</b></div>'+
-    '<div class="row"><span>Mesa</span><b style="font-size:22px;color:var(--navy)">Mesa '+esc(p.mesa)+'</b></div>'+
+    '<div class="row"><span>Mesa</span><b style="font-size:22px;color:var(--navy)">'+esc(p.mn||"Mesa "+p.mesa)+'</b></div>'+
     '<div class="row"><span>Lugar</span><b>'+esc(lugar)+'</b></div></div>'+
     bIcs+bG+
     '<p class="note">'+(ics?"El botón principal agrega la cita a tu calendario con dos avisos: 15 y 5 minutos antes. En iPhone se abre directo en Calendario; en Android se abre con Google Calendar.":"En Google Calendar revisa que quede un aviso 15 y otro 5 minutos antes.")+'</p>'+
