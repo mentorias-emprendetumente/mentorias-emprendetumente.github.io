@@ -366,7 +366,7 @@ var MentoriasCore = (function () {
 
   /* Planificación real de "Networking Al Grano" (documento de Copec). Bloques: Mañana 10–13, Mediodía 13–16, Tarde 16–19 */
   /* correos corporativos (documentos «Networking al grano» y formulario de mentores) */
-  var CORREOS = {"Josefina Achurra": "jachurra@copec.cl", "Francisco Correa": "francisco.correa@arcoprime.cl", "Sebastián Parot": "sparot@copec.cl", "Bernard Descazeaux": "bdescazeaux@copec.cl", "Oscar Guerrero": "oguerrero@copec.cl", "Mauricio Cortés": "macortes@copec.cl", "Tomás Ulloa": "tulloa@copec.cl", "Benjamín Silva": "bsilva@copec.cl", "María José Subercaseaux": "mariajose.subercaseaux@arcoprime.cl", "Felipe Rivera": "friverar@copec.cl", "Santiago Ariztía": "sariztia@copec.cl", "Nicolás Orellana": "nhorellana@copec.cl", "Laura González": "lgonzalez@copecemoac.cl", "Diego Armas": "d.armas@copecflux.cl", "Eduardo Peralta": "eperalta@copec.cl", "Esteban Amador": "eamador@copecemoac.cl", "Milena Pérez": "mperez@copecemoac.cl", "Tomás Vicuña": "tvicuna@copec.cl", "Catalina Meza": "cpmeza@copec.cl", "Ignacio Díaz": "idiaz@copec.cl", "Francisca Choy": "fchoy@copec.cl", "Agustina Henríquez": "ahenriquez@copec.cl", "Sebastián López": "slopez@copec.cl", "Ignacia Bachler": "ibachler@copec.cl", "Nicole Villagra": "nvillagra@copec.cl", "Gabriela Delgado": "gdelgado@copec.cl", "Rommy Gómez": "rgomez@copec.cl", "Carina Lopez": "clopez@copec.cl", "Simon Carcamo": "scarcamo@copec.cl", "Vicente Rasmussen Figueroa": "vrasmussen@copec.cl", "Antonella Giovanetti": "agiovanetti@copec.cl", "Ignacia Espinoza": "iespinozag@copec.cl", "Rosario Peña": "rpena@copec.cl", "Paula Galliussi": "pgalliussi@copec.cl", "Carlos Osorio": "cosorio@copec.cl", "Martín Navarrete": "mnavarrete@copec.cl", "Glenda Rojas": "garojas@copec.cl", "Juan Monroy": "jmonroy@copec.cl", "Daniela Devia": "ddevia@copec.cl"};
+  var CORREOS = {"Josefina Achurra": "jachurra@copec.cl", "Francisco Correa": "francisco.correa@arcoprime.cl", "Sebastián Parot": "sparot@copec.cl", "Bernard Descazeaux": "bdescazeaux@copec.cl", "Oscar Guerrero": "oguerrero@copec.cl", "Benjamín Silva": "bsilva@copec.cl", "María José Subercaseaux": "mariajose.subercaseaux@arcoprime.cl", "Felipe Rivera": "friverar@copec.cl", "Santiago Ariztía": "sariztia@copec.cl", "Nicolás Orellana": "nhorellana@copec.cl", "Diego Armas": "d.armas@copecflux.cl", "Eduardo Peralta": "eperalta@copec.cl", "Esteban Amador": "eamador@copecemoac.cl", "Catalina Meza": "cpmeza@copec.cl", "Ignacio Díaz": "idiaz@copec.cl", "Francisca Choy": "fchoy@copec.cl", "Agustina Henríquez": "ahenriquez@copec.cl", "Ignacia Bachler": "ibachler@copec.cl", "Nicole Villagra": "nvillagra@copec.cl", "Gabriela Delgado": "gdelgado@copec.cl", "Rommy Gómez": "rgomez@copec.cl", "Carina Lopez": "clopez@copec.cl", "Simon Carcamo": "scarcamo@copec.cl", "Vicente Rasmussen Figueroa": "vrasmussen@copec.cl", "Antonella Giovanetti": "agiovanetti@copec.cl", "Ignacia Espinoza": "iespinozag@copec.cl", "Rosario Peña": "rpena@copec.cl", "Paula Galliussi": "pgalliussi@copec.cl", "Carlos Osorio": "cosorio@copec.cl", "Martín Navarrete": "mnavarrete@copec.cl", "Glenda Rojas": "garojas@copec.cl", "Juan Monroy": "jmonroy@copec.cl", "Daniela Devia": "ddevia@copec.cl", "Natalia Briones": "n.briones@copecflux.cl", "Allizon Córdova": "acordova@copecemoac.cl", "Barbara Zulema": "bzfernandez@copec.cl", "Sebastián Romero": "sromero@copec.cl", "Pedro Fleischmann": "p.fleischmann@copecflux.cl"};
   var BLOQ = { M: ["10:00", "13:00"], D: ["13:00", "16:00"], T: ["16:00", "19:00"] };
   var PLAN = [
     ["Josefina Achurra", "Senior Business Developer", 0, [[0, "M"]]],
@@ -374,24 +374,23 @@ var MentoriasCore = (function () {
     ["Sebastián Parot", "Jefe de App Copec", 0, [[0, "T"]]],
     ["Bernard Descazeaux", "Product Manager, Copec Empresa", 0, [[0, "T"]]],
     ["Oscar Guerrero", "Subgerente Alianzas y Retail Media", 0, [[1, "M"]]],
-    ["Mauricio Cortés", "Jefe Alianzas", 0, [[1, "M"]]],
-    ["Tomás Ulloa", "Subgerente Estrategia y Productos, Ecosistema Digital", 0, [[1, "D"]]],
     ["Benjamín Silva", "Subgerente Crecimiento y Clientes, Ecosistema Digital", 0, [[1, "D"]]],
     ["María José Subercaseaux", "Sub Gerente Sostenibilidad Arcoprime", 0, [[1, "T"]]],
     ["Felipe Rivera", "Business Developer", 0, [[2, "M"]]],
     ["Santiago Ariztía", "Senior Business Developer", 1, [[0, "M"], [1, "D"]]],
     ["Nicolás Orellana", "Product Lead", 1, [[2, "M"]]],
-    ["Laura González", "Gerente Gestión Energética y Sostenibilidad, Copec Emoac", 2, [[0, "M"]]],
+    ["Natalia Briones", "Jefe Medios Digitales, Copec Flux", 2, [[0, "M"]]],
     ["Diego Armas", "Jefe Finanzas, Copec Flux", 2, [[0, "D"], [1, "M"]]],
     ["Eduardo Peralta", "Senior Business Developer", 2, [[0, "T"]]],
     ["Esteban Amador", "Líder Nuevos Negocios, Copec Emoac", 2, [[1, "D"]]],
-    ["Milena Pérez", "Jefa de Sostenibilidad, Copec Emoac", 2, [[1, "T"]]],
-    ["Tomás Vicuña", "Sub Gerente RED Copec Voltex", 2, [[2, "T"]]],
+    ["Allizon Córdova", "Ingeniera de Gestión Energética, Copec Emoac", 2, [[1, "T"]]],
+    ["Barbara Zulema", "Asesor Comercial B2C, Copec Voltex", 2, [[2, "M"]]],
+    ["Sebastián Romero", "Ingeniero en Gestión Red, Copec Voltex", 2, [[2, "D"]]],
+    ["Pedro Fleischmann", "Desarrollador de negocios, Copec Flux", 2, [[2, "T"]]],
     ["Catalina Meza", "CX Specialist", 3, [[0, "M"]]],
     ["Ignacio Díaz", "Ingeniero de Cambio Climático", 3, [[0, "D"]]],
     ["Francisca Choy", "UX/UI Designer", 3, [[1, "M"]]],
     ["Agustina Henríquez", "Jefe de Estudios", 3, [[1, "D"]]],
-    ["Sebastián López", "Jefe Producto Marketing Motorsport", 3, [[1, "T"]]],
     ["Ignacia Bachler", "Ingeniero Cambio Climático", 3, [[2, "M"]]],
     ["Nicole Villagra", "Líder Comunicaciones Energía", 3, [[2, "D"]]],
     ["Gabriela Delgado", "Software Engineer", 3, [[2, "D"]]],
@@ -2593,9 +2592,9 @@ function renderTV(){
       const end=(k.start+bk(k))*60;
       h+=`<div class="now wait"><div><div class="lbl">${k.calls?"LLAMADO "+k.calls+" DE 3":"ES TU TURNO"}</div><div class="who">${esc(k.name)}</div><div class="meta">Acércate a ${MN(mesa)} · con ${esc(m?m.name:"")}</div></div><div class="cd"><b data-end="${end}">${mmss(end-S.sec)}</b><span>tiempo disponible</span></div></div>`;
     } else if(freeNow){
-      h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">Mesa libre</div><div class="meta">Reserva en la tablet del stand o acércate</div></div></div>`;
+      h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">Mesa libre</div><div class="meta">Reserva con la anfitriona o acércate</div></div></div>`;
     } else {
-      h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">${nowM<OPEN?"Abrimos a las 10:00":nowM>=CLOSE?"Mentorías finalizadas":"Mesa en pausa"}</div><div class="meta">${nowM<OPEN?"Ya puedes reservar en la tablet del stand":nowM>=CLOSE?"Gracias por participar":"Próximo turno en breve"}</div></div></div>`;
+      h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">${nowM<OPEN?"Abrimos a las 10:00":nowM>=CLOSE?"Mentorías finalizadas":"Mesa en pausa"}</div><div class="meta">${nowM<OPEN?"Reserva con la anfitriona del stand":nowM>=CLOSE?"Gracias por participar":"Próximo turno en breve"}</div></div></div>`;
     }
     const nexts=upcoming(day,mesa,shown?shown.id:null).slice(0,mesasTv.length>2?2:3);
     h+=`<div class="next"><div class="lbl">PRÓXIMOS</div>`;
@@ -2606,7 +2605,7 @@ function renderTV(){
     }
     h+=`</div></div>`;
   }
-  h+=`</div><div class="tv-foot"><span>¿Aún no reservas? <b>Hazlo gratis en la tablet del stand</b></span><span>Mentorías 1 a 1 · gratis</span></div>`;
+  h+=`</div><div class="tv-foot"><span>¿Aún no reservas? <b>Hazlo gratis con la anfitriona del stand</b></span><span>Mentorías 1 a 1 · gratis</span></div>`;
   if(LIVE&&!S.soundOn)h+=`<div class="soundgate" id="soundGate"><b>Toca la pantalla para activar el sonido</b><span>Solo una vez, al encender la pantalla</span></div>`;
   if(bannerOn())h+=`<div class="banner" role="alert"><div class="l">LLAMADO ${S.banner.calls} DE 3</div><div class="n">${esc(S.banner.name)}</div><div class="m">Acércate a ${MN(S.banner.mesa)}${S.banner.mentor?" · con "+esc(S.banner.mentor):""}</div><div class="c">Stand Copec · Mentorías</div></div>`;
   document.getElementById("tvScreen").innerHTML=h;
