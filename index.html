@@ -23,7 +23,7 @@
  */
 var MentoriasCore = (function () {
   "use strict";
-  var OPEN = 600, CLOSE = 1140, GRACE = 5, MAXCALLS = 3, DAYS = 3, MESAS = [1, 2];
+  var OPEN = 600, CLOSE = 1140, GRACE = 5, MAXCALLS = 3, DAYS = 3, MESAS = [1, 2, 3, 4, 5];
   var LABEL_DIAS = ["Jueves 19", "Viernes 20", "Sábado 21"];
   var TEMAS = ["Nueva Conveniencia", "Nueva Movilidad", "Nuevas Energías", "Vinculación con el Medio"];
 
@@ -41,7 +41,10 @@ var MentoriasCore = (function () {
     function okDur(v) { v = +v; return v >= 15 && v <= 60 && v % 5 === 0; }
     function durB(b) { return okDur(b && b.dur) ? +b.dur : cfg.dur; }
     function dk(k) { return +k.dur > 0 ? +k.dur : cfg.dur; }
-    function slotsOf(b) { var out = [], d = durB(b); for (var t = toMin(b.from); t + d <= toMin(b.to); t += d) out.push(t); return out; }
+    function okGap(v) { v = +v; return v >= 0 && v <= 30 && v % 5 === 0; }
+    function gapC() { return cfg.gap === 0 || +cfg.gap > 0 ? +cfg.gap : 10; }
+    /* una reunión cada (duración + intervalo): con 20 min y 10 de intervalo, 14:00, 14:30, 15:00… */
+    function slotsOf(b) { var out = [], d = durB(b), st = d + gapC(); for (var t = toMin(b.from); t + d <= toMin(b.to); t += st) out.push(t); return out; }
     function blocksOfMentor(day, mid) { return db.grid.filter(function (g) { return g.day === day && g.mid === mid; }).sort(function (a, b) { return toMin(a.from) - toMin(b.from); }); }
     function mentorsOf(tema) { return db.mentors.filter(function (m) { return m.tema === tema; }); }
     function mn(n) { var x = cfg.mesaNames && cfg.mesaNames[n]; return x || "Mesa " + n; }
@@ -103,6 +106,12 @@ var MentoriasCore = (function () {
     function fail(msg) { return { ok: false, msg: msg }; }
     function ok(data, msg) { return { ok: true, data: data || null, msg: msg || "" }; }
 
+    /* deja ocupado (bloqueado) el horario de una reserva que se cae, para que no se pueda reservar */
+    function blockOf(k) {
+      var f = k.start, t = k.start + dk(k);
+      if (breakOverM(k.day, k.mid, f, t - f)) return;
+      db.breaks = db.breaks || []; db.breaks.push({ id: nextId(), day: k.day, mesa: 0, mid: k.mid, from: fmt(f), to: fmt(t), label: "Bloqueado" });
+    }
     var A = {
       checkPin: function () { return ok(); },
 
@@ -118,7 +127,7 @@ var MentoriasCore = (function () {
         var e = slotsFor(day, tema).filter(function (x) { return x.start === start; })[0];
         if (!e) return fail("Ese horario ya no existe o ya pasó. Elige otro.");
         if (!e.mids.length) return fail("Ese horario se acaba de llenar. Elige otro.");
-        if (!e.mesa) return fail("Las 2 mesas están ocupadas a esa hora. Elige otro horario.");
+        if (!e.mesa) return fail("Todas las mesas están ocupadas a esa hora. Elige otro horario.");
         var mid = e.mids.slice().sort(function (a, b) { return loadOf(day, a) - loadOf(day, b) || a - b; })[0];
         var k = { id: nextId(), day: day, mesa: e.mesa, mid: mid, dur: e.dur, start: start, name: cap(first) + " " + ini.toUpperCase() + ".", email: email,
           status: "reservado", calls: 0, startedAt: null, endsAt: null, endedAt: null, source: "tablet", advance: day > ctx.day,
@@ -131,7 +140,7 @@ var MentoriasCore = (function () {
       call: function (p) {
         var k = find(p.id); if (!k || !waiting(k)) return fail("Esa reserva ya no está esperando.");
         var bn = k.day === ctx.day ? breakNow(k.mesa) : null; if (bn) return fail(mn(k.mesa) + " está en descanso hasta las " + bn.to + ".");
-        k.calls++; cfg.lastCall = { id: k.id, name: k.name, mesa: k.mesa, calls: k.calls, at: ctx.nowMs };
+        k.calls++; var mc = mentorById(k.mid); cfg.lastCall = { id: k.id, name: k.name, mesa: k.mesa, mentor: mc ? mc.name : "", calls: k.calls, at: ctx.nowMs };
         return ok();
       },
       start: function (p) {
@@ -162,7 +171,7 @@ var MentoriasCore = (function () {
         return ok();
       },
       presente: function (p) { var k = find(p.id); if (!k || k.status !== "reservado") return fail("Esa reserva no está pendiente."); k.status = "presente"; return ok(); },
-      prodInfo: function () { return ok(); },
+      prodInfo: function () { var em = {}; db.mentors.forEach(function (m) { if (m.email) em[m.id] = m.email; }); return ok({ emails: em }); },
       breakAdd: function (p) {
         var day = +p.day, mesa = +p.mesa || 0, mid = +p.mid || 0, from = String(p.from || ""), to = String(p.to || "");
         if (!(day >= 0 && day < DAYS)) return fail("Día no válido.");
@@ -195,7 +204,41 @@ var MentoriasCore = (function () {
       },
       deleteBooking: function (p) { var i = -1; for (var j = 0; j < db.bookings.length; j++) if (db.bookings[j].id === +p.id) { i = j; break; } if (i < 0) return fail("Esa reserva ya no existe."); var k = db.bookings[i]; if (cfg.lastCall && cfg.lastCall.id === k.id) cfg.lastCall = null; db.bookings.splice(i, 1); return ok(); },
       clearBookings: function () { db.bookings.length = 0; cfg.lastCall = null; return ok(); },
-      cancel: function (p) { var k = find(p.id); if (!k || !waiting(k)) return fail("Esa reserva ya no se puede cancelar."); k.status = "cancelada"; return ok(); },
+      cancel: function (p) {
+        var k = find(p.id); if (!k || !waiting(k)) return fail("Esa reserva ya no se puede cancelar.");
+        k.status = "cancelada"; k.rsvp = "";
+        if (p.mode === "bloquear") blockOf(k);
+        return ok(null, p.mode === "bloquear" ? "Cita cancelada. El horario quedó bloqueado." : "Cita cancelada. El horario quedó libre.");
+      },
+      /* el mentor marca que la persona no llegó: libera o bloquea ese horario */
+      noShow: function (p) {
+        var k = find(p.id); if (!k || !waiting(k)) return fail("Esa reserva ya no está esperando.");
+        k.status = "liberado"; k.rsvp = "";
+        if (p.mode === "bloquear") blockOf(k);
+        return ok(null, p.mode === "bloquear" ? "Marcada como no llegó. El horario quedó bloqueado." : "Marcada como no llegó. El horario quedó libre.");
+      },
+      /* el mentor bloquea un horario libre de su agenda */
+      slotBlock: function (p) {
+        var mid = +p.mid, day = +p.day, t = +p.start, m = mentorById(mid); if (!m) return fail("Mentor no válido.");
+        if (!(day >= 0 && day < DAYS)) return fail("Día no válido.");
+        var g = blocksOfMentor(day, mid).filter(function (b) { return slotsOf(b).indexOf(t) >= 0; })[0]; if (!g) return fail("Ese horario no existe en tu agenda.");
+        var d = durB(g);
+        if (mentorBusy(day, mid, t, d)) return fail("Ese horario ya tiene una reserva. Cancélala primero.");
+        if (breakOverM(day, mid, t, d)) return fail("Ese horario ya está bloqueado.");
+        db.breaks = db.breaks || []; db.breaks.push({ id: nextId(), day: day, mesa: 0, mid: mid, from: fmt(t), to: fmt(t + d), label: "Bloqueado" });
+        return ok(null, "Horario bloqueado.");
+      },
+      /* pausa del mentor desde ahora (almuerzo, baño, llamada…) */
+      mentorPause: function (p) {
+        var mid = +p.mid, mins = +p.mins; if (!mentorById(mid)) return fail("Mentor no válido.");
+        if (!(mins >= 5 && mins <= 120 && mins % 5 === 0)) return fail("Duración de pausa no válida.");
+        var f = Math.floor(ctx.sec / 60), t = Math.min(CLOSE, f + mins);
+        if (db.bookings.some(function (k) { return k.day === ctx.day && k.mid === mid && k.status === "enmesa"; })) return fail("Tienes una mentoría en curso. Termínala antes de pausar.");
+        if (breakOverM(ctx.day, mid, f, 1)) return fail("Ya estás en una pausa.");
+        return A.breakAdd({ day: ctx.day, mid: mid, from: fmt(f), to: fmt(t), label: p.label || "Descanso" });
+      },
+      /* Google Calendar: la persona respondió «No asistiré» (o volvió a aceptar) */
+      setRsvp: function (p) { var k = find(p.id); if (!k) return fail("Esa reserva ya no existe."); k.rsvp = p.v === "no" ? "no" : ""; return ok(); },
 
       setCfg: function (p) {
         var key = p.key, v = p.value;
@@ -203,7 +246,13 @@ var MentoriasCore = (function () {
         else if (key === "dur") { if (!okDur(v)) return fail("Duración no válida (de 15 a 60 minutos, de 5 en 5)."); cfg.dur = +v; }
         else if (key === "fecha") { var i = +p.i; if (!(i >= 0 && i < DAYS)) return fail("Día no válido."); if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return fail("Fecha no válida."); cfg.fechas[i] = v || ""; }
         else if (key === "ensayo") { if (["", "1", "2", "3"].indexOf(String(v)) < 0) return fail("Valor no válido."); cfg.ensayo = String(v); }
-        else if (key === "mesaName") { var i2 = +p.i; if (i2 !== 1 && i2 !== 2) return fail("Mesa no válida."); cfg.mesaNames = cfg.mesaNames || {}; var nm = String(v || "").trim().slice(0, 24); cfg.mesaNames[i2] = nm || ("Mesa " + i2); }
+        else if (key === "mesaName") { var i2 = +p.i; if (MESAS.indexOf(i2) < 0) return fail("Mesa no válida."); cfg.mesaNames = cfg.mesaNames || {}; var nm = String(v || "").trim().slice(0, 24); cfg.mesaNames[i2] = nm || ("Mesa " + i2); }
+        else if (key === "gap") {
+          if (!okGap(v)) return fail("Intervalo no válido (de 0 a 30 minutos, de 5 en 5).");
+          if (db.bookings.some(function (k) { return occupies(k) && k.status !== "finalizada"; })) return fail("Hay reservas activas. Bórralas o cancélalas antes de cambiar el intervalo.");
+          cfg.gap = +v;
+        }
+        else if (key === "calendar") cfg.calendar = !!v;
         else if (key === "ubicacion") cfg.ubicacion = String(v || "").slice(0, 80);
         else return fail("Ajuste no válido.");
         return ok();
@@ -264,10 +313,11 @@ var MentoriasCore = (function () {
       },
       mentorSet: function (p) {
         var m = mentorById(+p.id); if (!m) return fail("Ese mentor ya no existe.");
-        if (p.field !== "name" && p.field !== "spec" && p.field !== "tema") return fail("Campo no válido.");
+        if (p.field !== "name" && p.field !== "spec" && p.field !== "tema" && p.field !== "email") return fail("Campo no válido.");
         var v = String(p.value || "").trim(); if (p.field === "name" && v.length < 2) return fail("El nombre es muy corto.");
+        if (p.field === "email" && v && !/^\S+@\S+\.\S+$/.test(v)) return fail("El correo del mentor no es válido.");
         if (p.field === "tema" && TEMAS.indexOf(v) < 0) return fail("Categoría no válida.");
-        m[p.field] = v.slice(0, 80); return ok();
+        m[p.field] = v.slice(0, p.field === "email" ? 120 : 80); return ok();
       },
       mentorDel: function (p) {
         var id = +p.id; if (db.grid.some(function (g) { return g.mid === id; })) return fail("Ese mentor tiene bloques en la parrilla. Quítalos primero.");
@@ -279,15 +329,17 @@ var MentoriasCore = (function () {
         if (name.length < 2) return fail("Escribe el nombre del mentor.");
         if (days.length && (!okHM(p.from) || !okHM(p.to) || t <= f)) return fail("La hora de término debe ser después de la de inicio.");
         var dnew = p.dur != null && p.dur !== "" ? +p.dur : cfg.dur; if (!okDur(dnew)) return fail("Duración no válida (de 15 a 60 minutos, de 5 en 5).");
-        var id = nextId(); db.mentors.push({ id: id, name: name.slice(0, 80), spec: String(p.spec || "").trim().slice(0, 80) || "Por confirmar", tema: TEMAS.indexOf(p.tema) >= 0 ? p.tema : TEMAS[0] });
+        var memail = String(p.email || "").trim(); if (memail && !/^\S+@\S+\.\S+$/.test(memail)) return fail("El correo del mentor no es válido.");
+        var id = nextId(); db.mentors.push({ id: id, email: memail.slice(0, 120), name: name.slice(0, 80), spec: String(p.spec || "").trim().slice(0, 80) || "Por confirmar", tema: TEMAS.indexOf(p.tema) >= 0 ? p.tema : TEMAS[0] });
         var added = [];
         days.forEach(function (d) { db.grid.push({ id: nextId(), day: d, mid: id, from: p.from, to: p.to, dur: dnew }); added.push(LABEL_DIAS[d]); });
         return ok({ added: added.length }, added.length ? name + " agregado: " + added.join(", ") + " de " + p.from + " a " + p.to + "." : name + " quedó en la lista de mentores, sin bloques.");
       }
     };
-    return { A: A, mentorById: mentorById, slotsOf: slotsOf, slotsFor: slotsFor, blocksOfMentor: blocksOfMentor, mentorsOf: mentorsOf, mentorsNow: mentorsNow, dk: dk, durB: durB, waiting: waiting, occupies: occupies, mn: mn, breakNow: breakNow, breakOver: breakOver, breakOverM: breakOverM, mesaBusy: mesaBusy, bookingAtMesa: bookingAtMesa, activeSession: activeSession, secsLeft: secsLeft, loadOf: loadOf };
+    return { A: A, mentorById: mentorById, slotsOf: slotsOf, slotsFor: slotsFor, blocksOfMentor: blocksOfMentor, mentorsOf: mentorsOf, mentorsNow: mentorsNow, dk: dk, durB: durB, waiting: waiting, occupies: occupies, mn: mn, breakNow: breakNow, breakOver: breakOver, breakOverM: breakOverM, mesaBusy: mesaBusy, gap: gapC, bookingAtMesa: bookingAtMesa, activeSession: activeSession, secsLeft: secsLeft, loadOf: loadOf };
   }
 
+  function defNames() { var o = {}; MESAS.forEach(function (n) { o[n] = "Mesa " + n; }); return o; }
   var PUBLIC = { book: true };
 
   function run(db, ctx, action, payload, pin) {
@@ -301,18 +353,20 @@ var MentoriasCore = (function () {
   function publicView(db, ctx) {
     return {
       now: { day: ctx.day, sec: ctx.sec, nowMs: ctx.nowMs, today: ctx.today || "", label: ctx.label || "", frozen: !!ctx.frozen },
-      cfg: { dur: db.cfg.dur, allowOtherDays: !!db.cfg.allowOtherDays, mtDur: db.cfg.mtDur, lastCall: db.cfg.lastCall || null, fechas: db.cfg.fechas, ensayo: db.cfg.ensayo || "", ubicacion: db.cfg.ubicacion || "", mesaNames: db.cfg.mesaNames || { 1: "Mesa 1", 2: "Mesa 2" } },
-      mentors: db.mentors,
+      cfg: { dur: db.cfg.dur, allowOtherDays: !!db.cfg.allowOtherDays, mtDur: db.cfg.mtDur, lastCall: db.cfg.lastCall || null, fechas: db.cfg.fechas, ensayo: db.cfg.ensayo || "", ubicacion: db.cfg.ubicacion || "", gap: db.cfg.gap === 0 || +db.cfg.gap > 0 ? +db.cfg.gap : 10, calendar: db.cfg.calendar === true, mesaNames: db.cfg.mesaNames || defNames() },
+      mentors: db.mentors.map(function (m) { return { id: m.id, name: m.name, spec: m.spec, tema: m.tema, hasEmail: !!m.email }; }),
       grid: db.grid,
       breaks: db.breaks || [],
       bookings: db.bookings.map(function (k) {
         return { id: k.id, day: k.day, mesa: k.mesa, mid: k.mid || 0, dur: k.dur || db.cfg.dur, start: k.start, name: k.name, hasEmail: !!k.email, status: k.status, calls: k.calls,
-          startedAt: k.startedAt, endsAt: k.endsAt, endedAt: k.endedAt, source: k.source, advance: !!k.advance };
+          startedAt: k.startedAt, endsAt: k.endsAt, endedAt: k.endedAt, source: k.source, advance: !!k.advance, rsvpNo: k.rsvp === "no" };
       })
     };
   }
 
   /* Planificación real de "Networking Al Grano" (documento de Copec). Bloques: Mañana 10–13, Mediodía 13–16, Tarde 16–19 */
+  /* correos corporativos (documentos «Networking al grano» y formulario de mentores) */
+  var CORREOS = {"Josefina Achurra": "jachurra@copec.cl", "Francisco Correa": "francisco.correa@arcoprime.cl", "Sebastián Parot": "sparot@copec.cl", "Bernard Descazeaux": "bdescazeaux@copec.cl", "Oscar Guerrero": "oguerrero@copec.cl", "Mauricio Cortés": "macortes@copec.cl", "Tomás Ulloa": "tulloa@copec.cl", "Benjamín Silva": "bsilva@copec.cl", "María José Subercaseaux": "mariajose.subercaseaux@arcoprime.cl", "Felipe Rivera": "friverar@copec.cl", "Santiago Ariztía": "sariztia@copec.cl", "Nicolás Orellana": "nhorellana@copec.cl", "Laura González": "lgonzalez@copecemoac.cl", "Diego Armas": "d.armas@copecflux.cl", "Eduardo Peralta": "eperalta@copec.cl", "Esteban Amador": "eamador@copecemoac.cl", "Milena Pérez": "mperez@copecemoac.cl", "Tomás Vicuña": "tvicuna@copec.cl", "Catalina Meza": "cpmeza@copec.cl", "Ignacio Díaz": "idiaz@copec.cl", "Francisca Choy": "fchoy@copec.cl", "Agustina Henríquez": "ahenriquez@copec.cl", "Sebastián López": "slopez@copec.cl", "Ignacia Bachler": "ibachler@copec.cl", "Nicole Villagra": "nvillagra@copec.cl", "Gabriela Delgado": "gdelgado@copec.cl", "Rommy Gómez": "rgomez@copec.cl", "Carina Lopez": "clopez@copec.cl", "Simon Carcamo": "scarcamo@copec.cl", "Vicente Rasmussen Figueroa": "vrasmussen@copec.cl", "Antonella Giovanetti": "agiovanetti@copec.cl", "Ignacia Espinoza": "iespinozag@copec.cl", "Rosario Peña": "rpena@copec.cl", "Paula Galliussi": "pgalliussi@copec.cl", "Carlos Osorio": "cosorio@copec.cl", "Martín Navarrete": "mnavarrete@copec.cl", "Glenda Rojas": "garojas@copec.cl", "Juan Monroy": "jmonroy@copec.cl", "Daniela Devia": "ddevia@copec.cl"};
   var BLOQ = { M: ["10:00", "13:00"], D: ["13:00", "16:00"], T: ["16:00", "19:00"] };
   var PLAN = [
     ["Josefina Achurra", "Senior Business Developer", 0, [[0, "M"]]],
@@ -351,15 +405,15 @@ var MentoriasCore = (function () {
   function defaultDb() {
     var mentors = [], grid = [], id = 100;
     PLAN.forEach(function (p) {
-      var m = { id: ++id, name: p[0], spec: p[1], tema: TEMAS[p[2]] }; mentors.push(m);
+      var m = { id: ++id, name: p[0], email: CORREOS[p[0]] || "", spec: p[1], tema: TEMAS[p[2]] }; mentors.push(m);
       p[3].forEach(function (b) { grid.push({ id: ++id, day: b[0], mid: m.id, from: BLOQ[b[1]][0], to: BLOQ[b[1]][1], dur: 20 }); });
     });
-    EXTRA.forEach(function (e) { mentors.push({ id: ++id, name: e[0], spec: "Por confirmar", tema: TEMAS[e[1]] }); });
-    return { cfg: { pin: "1234", dur: 20, allowOtherDays: true, mtDur: { 1: 20, 2: 20 }, lastCall: null, fechas: ["2026-11-19", "2026-11-20", "2026-11-21"], ensayo: "", ubicacion: "Stand Copec · Parque Bicentenario de Vitacura", mesaNames: { 1: "Mesa 1", 2: "Mesa 2" } },
+    EXTRA.forEach(function (e) { mentors.push({ id: ++id, name: e[0], email: CORREOS[e[0]] || "", spec: "Por confirmar", tema: TEMAS[e[1]] }); });
+    return { cfg: { pin: "1234", dur: 20, allowOtherDays: true, mtDur: { 1: 20, 2: 20 }, gap: 10, calendar: false, lastCall: null, fechas: ["2026-11-19", "2026-11-20", "2026-11-21"], ensayo: "", ubicacion: "Stand Copec · Parque Bicentenario de Vitacura", mesaNames: defNames() },
       mentors: mentors, grid: grid, breaks: [], bookings: [], seq: id };
   }
 
-  return { run: run, make: make, publicView: publicView, defaultDb: defaultDb, toMin: toMin, fmt: fmt, OPEN: OPEN, CLOSE: CLOSE, GRACE: GRACE, MAXCALLS: MAXCALLS, LABEL_DIAS: LABEL_DIAS, TEMAS: TEMAS };
+  return { run: run, make: make, publicView: publicView, defaultDb: defaultDb, toMin: toMin, fmt: fmt, OPEN: OPEN, CLOSE: CLOSE, GRACE: GRACE, MAXCALLS: MAXCALLS, LABEL_DIAS: LABEL_DIAS, TEMAS: TEMAS, MESAS: MESAS, CORREOS: CORREOS };
 })();
 if (typeof module !== "undefined" && module.exports) module.exports = MentoriasCore;
 
@@ -1802,6 +1856,15 @@ main{padding:16px 16px 40px}
 .banner .n{font-size:10cqw;font-weight:800;line-height:1}
 .banner .m{font-size:4.4cqw;font-weight:700}
 .banner .c{font-family:var(--body);font-size:1.6cqw;opacity:.9}
+.tv-grid.many{gap:1.2cqw;padding:1.2cqw 2cqw}
+.tv-grid.many .tv-mesa h2{font-size:1.9cqw;flex-direction:column;align-items:flex-start;gap:.1cqw}
+.tv-grid.many .tv-mesa h2 small{font-size:1.05cqw;max-width:100%}
+.tv-grid.many .now{grid-template-columns:1fr;padding:1cqw 1.2cqw;gap:.4cqw}
+.tv-grid.many .now .who{font-size:2.4cqw}.tv-grid.many .now.free .who{font-size:1.9cqw}
+.tv-grid.many .now .lbl{font-size:1cqw}.tv-grid.many .now .meta{font-size:1.1cqw;white-space:normal}
+.tv-grid.many .now .cd{text-align:left}.tv-grid.many .now .cd b{font-size:3cqw}.tv-grid.many .now .cd span{font-size:1cqw}
+.tv-grid.many .nrow{grid-template-columns:4.6cqw 1fr;padding:.4cqw .8cqw}.tv-grid.many .nrow .t{font-size:1.5cqw}.tv-grid.many .nrow .n{font-size:1.4cqw}.tv-grid.many .nrow .m{font-size:.95cqw}.tv-grid.many .soonpill{display:none}
+.tv-grid.many .next .lbl{font-size:1cqw}
 @keyframes pulse{50%{filter:brightness(1.15)}}
 @media (prefers-reduced-motion:reduce){.now.wait,.banner{animation:none}}
 
@@ -2005,6 +2068,18 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
   .qrcard{margin:0 auto}
   .t-head h1{font-size:22px}
 }
+.warnbox{background:#fde8e6;border-left:4px solid #c0392b;color:#7a1f16;padding:10px 14px;border-radius:8px;margin:10px 0;font-size:14px}
+.rsvp{background:#fde8e6;color:#a1271b;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:700;display:inline-block;margin-top:4px}
+.mchoose{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:8px 0 18px}
+.mchoose a{display:block;padding:12px 14px;border:2px solid #d6dde9;border-radius:12px;background:#fff;color:#1f3089;text-decoration:none;font-weight:700}
+.mchoose a small{display:block;font-weight:400;color:#5a6b8c;font-size:13px;margin-top:2px}
+.ag{display:grid;gap:8px;margin-top:12px}
+.ag-row{display:grid;grid-template-columns:104px 1fr;gap:6px 12px;align-items:center;padding:10px 12px;border:1px solid #d6dde9;border-radius:10px;background:#fff}
+.ag-row .t{font-weight:800;font-size:17px;font-variant-numeric:tabular-nums}.ag-row .t small{display:block;font-weight:500;color:#5a6b8c;font-size:12px}
+.ag-row.past{opacity:.55}.ag-row.free{background:#f5f7fb}.ag-row.blk{background:#fdf3dc}.ag-row.live{border-color:#1f8f4e;background:#e8f6ee}
+.ag-row .acts,.ask{display:flex;flex-wrap:wrap;gap:6px;align-items:center;grid-column:1/-1}.ag-row .acts button,.ask button,.pcard .acts button{min-height:44px;padding:0 14px}
+.pcard{border:2px solid #1f3089;border-radius:14px;padding:16px;margin:10px 0;background:#fff;display:grid;gap:8px}.pcard .who{font-size:28px;font-weight:800}.pcard .acts{display:flex;flex-wrap:wrap;gap:8px}
+.ask{background:#fdf3dc;padding:8px 10px;border-radius:8px}
 </style>
 </head>
 <body>
@@ -2039,8 +2114,8 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
       <div class="home-grid">
         <a href="#anfitriona">Tablet anfitriona<small>Reservas, recepción, parrilla y métricas</small></a>
         <a href="#pantalla">Visor<small>Turnos y llamados para el público</small></a>
-        <a href="#mentor-1">Tablet Mesa 1<small>Para el mentor de la mesa 1</small></a>
-        <a href="#mentor-2">Tablet Mesa 2<small>Para el mentor de la mesa 2</small></a>
+        <a href="#mentores">Panel del mentor<small>Cada mentor ve su agenda, llama y bloquea horarios</small></a>
+        <a href="#mentor-1">Tablet de mesa<small>Opcional: una pantalla fija por mesa (1 a 5)</small></a>
         <a href="#produccion" class="prodlink">Producción<small>Control y vista de todo el sistema (pide PIN)</small></a>
       </div>
     </div></div>
@@ -2066,12 +2141,26 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
     <div class="tablet"><div class="t-screen">
       <div class="t-head">
         <div><a class="homebtn" href="#">← Inicio</a><h1 id="mtTitle">Mesa 1</h1><p id="mtSub"></p></div>
-        <div class="days" role="group" aria-label="Tablet de mesa" style="margin:0">
-          <button type="button" class="chip" data-mt="1">Mesa 1</button>
-          <button type="button" class="chip" data-mt="2">Mesa 2</button>
-        </div>
+        <div class="days" id="mtChips" role="group" aria-label="Tablet de mesa" style="margin:0"></div>
       </div>
       <div class="t-body" id="mentorBody"></div>
+    </div></div>
+  </section>
+
+  <section class="view" id="v-mentores" aria-label="Elegir mentor">
+    <div class="tablet"><div class="t-screen">
+      <div class="t-head"><div><a class="homebtn" href="#">← Inicio</a><h1>Panel del mentor</h1><p>Elige tu nombre para abrir tu agenda</p></div></div>
+      <div class="t-body" id="chooseBody"></div>
+    </div></div>
+  </section>
+
+  <section class="view" id="v-panel" aria-label="Panel del mentor">
+    <div class="tablet"><div class="t-screen">
+      <div class="t-head">
+        <div><a class="homebtn" href="#mentores">← Mentores</a><h1 id="pnTitle">Mi agenda</h1><p id="pnSub"></p></div>
+        <div class="days" id="pnDays" role="group" aria-label="Día" style="margin:0"></div>
+      </div>
+      <div class="t-body" id="panelBody"></div>
     </div></div>
   </section>
 
@@ -2099,6 +2188,7 @@ function santiagoSec(){
   if(LIVE){if(SRV.sec==null)return realSantiagoSec();return SRV.frozen?SRV.sec:Math.min(86399,SRV.sec+Math.floor((performance.now()-SRV.at)/1000))}
   return ((realSantiagoSec()+OFFSET)%86400+86400)%86400}
 const OPEN=10*60, CLOSE=19*60, GRACE=5, MAXCALLS=3;
+const MESAS=MentoriasCore.MESAS;
 const toMin=s=>{const [h,m]=String(s).split(":").map(Number);return h*60+(m||0)};
 const fmt=m=>String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");
 const mmss=s=>{s=Math.max(0,Math.round(s));return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")};
@@ -2109,7 +2199,7 @@ let uid=100;
 const DB0=MentoriasCore.defaultDb();
 uid=DB0.seq;
 const S={
-  day:0, sec:santiagoSec(), dur:20, allowOtherDays:true,
+  day:0, sec:santiagoSec(), dur:20, gap:10, calendar:false, memails:null, pm:0, pDay:null, pAsk:null, allowOtherDays:true,
   mentors:DB0.mentors,
   grid:DB0.grid,
   bookings:[],
@@ -2137,22 +2227,22 @@ function demoSeeds(){
 if(LIVE){S.mentors=[];S.grid=[];S.bookings=[]}else S.bookings=demoSeeds();
 
 /* ---------- datos: en demo se guardan en esta página; en modo real, en Google Sheets ---------- */
-const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Mesa 1",2:"Mesa 2"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
+const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,gap:10,calendar:false,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
 let lastCallSeen=null,firstLoad=true;
 function adoptCall(lc,serverNow){
   const key=lc?lc.at+"-"+lc.id+"-"+lc.calls:null;
   if(!lc||key===lastCallSeen)return;
   const fresh=!firstLoad||((serverNow||Date.now())-lc.at)<12000;
   lastCallSeen=key;
-  if(fresh){S.banner={name:lc.name,mesa:lc.mesa,calls:lc.calls,until:Date.now()+12000};if(!LIVE||S.view==="pantalla")beep()}
+  if(fresh){S.banner={name:lc.name,mesa:lc.mesa,mentor:lc.mentor||"",calls:lc.calls,until:Date.now()+12000};if(!LIVE||S.view==="pantalla")beep()}
 }
 function syncDemo(){
-  S.mentors=db.mentors;S.grid=db.grid;S.breaks=db.breaks||[];S.mesaNames=db.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2"};S.bookings=db.bookings;S.dur=db.cfg.dur;S.allowOtherDays=db.cfg.allowOtherDays;S.mtDur=db.cfg.mtDur;
+  S.mentors=db.mentors;S.grid=db.grid;S.breaks=db.breaks||[];S.mesaNames=db.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5"};S.bookings=db.bookings;S.dur=db.cfg.dur;S.gap=db.cfg.gap;S.calendar=!!db.cfg.calendar;S.allowOtherDays=db.cfg.allowOtherDays;S.mtDur=db.cfg.mtDur;
   S.fechas=db.cfg.fechas;applyDayLabels();S.ensayo=db.cfg.ensayo;S.ubicacion=db.cfg.ubicacion;uid=db.seq;adoptCall(db.cfg.lastCall);firstLoad=false;
 }
 function applyState(pub){
-  S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
-  S.dur=pub.cfg.dur;S.allowOtherDays=pub.cfg.allowOtherDays;S.mtDur=pub.cfg.mtDur;S.fechas=pub.cfg.fechas||["","",""];applyDayLabels();S.ensayo=pub.cfg.ensayo||"";S.ubicacion=pub.cfg.ubicacion||S.ubicacion;
+  S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
+  S.dur=pub.cfg.dur;S.gap=pub.cfg.gap>=0?pub.cfg.gap:10;S.calendar=!!pub.cfg.calendar;S.allowOtherDays=pub.cfg.allowOtherDays;S.mtDur=pub.cfg.mtDur;S.fechas=pub.cfg.fechas||["","",""];applyDayLabels();S.ensayo=pub.cfg.ensayo||"";S.ubicacion=pub.cfg.ubicacion||S.ubicacion;
   S.lastCall=pub.cfg.lastCall||null;S.day=pub.now.day;S.label=pub.now.label||"";S.today=pub.now.today||"";
   SRV.sec=pub.now.sec;SRV.at=performance.now();SRV.frozen=!!pub.now.frozen;S.sec=santiagoSec();
   adoptCall(pub.cfg.lastCall,pub.now.nowMs);firstLoad=false;S.loaded=true;
@@ -2160,7 +2250,7 @@ function applyState(pub){
 }
 function toast(msg){if(!msg)return;let t=document.getElementById("toast");if(!t){t=document.createElement("div");t.id="toast";t.className="toast";t.setAttribute("role","status");document.body.appendChild(t)}t.textContent=msg;t.style.display="block";clearTimeout(t._h);t._h=setTimeout(()=>{t.style.display="none"},4500)}
 function authFailed(){S.pinValue=null;S.unlocked=false;try{localStorage.removeItem("mentorias_pin")}catch(e){}toast("El PIN cambió. Ingrésalo de nuevo.");if(S.view==="tablet"){S.hostTab=S.prodMode?"pin":"reserva";S.pinTarget=S.prodMode?"live":S.pinTarget;S.pinIn=""}renderAll()}
-function roleNow(){return S.view==="tablet"?(S.prodMode?"produccion":"anfitriona"):S.view==="mentor"?"mesa"+S.mt:S.view==="pantalla"?"visor":""}
+function roleNow(){return S.view==="tablet"?(S.prodMode?"produccion":"anfitriona"):S.view==="mentor"?"mesa"+S.mt:S.view==="panel"||S.view==="mentores"?"mentores":S.view==="pantalla"?"visor":""}
 async function act(action,payload,pinOverride){
   const pin=pinOverride!=null?pinOverride:S.pinValue;
   if(!LIVE){const r=MentoriasCore.run(db,{day:S.day,sec:S.sec,nowMs:Date.now()},action,payload,pin);syncDemo();return r}
@@ -2185,11 +2275,11 @@ const mentorById=id=>S.mentors.find(m=>m.id===id)||{name:"Por confirmar",spec:""
 const okDur=v=>{v=+v;return v>=15&&v<=60&&v%5===0};
 const durB=b=>okDur(b&&b.dur)?+b.dur:S.dur;
 const bk=k=>+k.dur>0?+k.dur:S.dur;
-function slotsOf(b){const out=[],d=durB(b);for(let t=toMin(b.from);t+d<=toMin(b.to);t+=d)out.push(t);return out}
+function slotsOf(b){const out=[],d=durB(b),st=d+(+S.gap>=0?+S.gap:10);for(let t=toMin(b.from);t+d<=toMin(b.to);t+=st)out.push(t);return out}
 const MNr=n=>(S.mesaNames&&S.mesaNames[n])||"Mesa "+n;
 const MN=n=>esc(MNr(n));
 /* las reglas de reserva viven en core.js: aquí se consultan sobre el estado que muestra la pantalla */
-function CR(){return MentoriasCore.make({cfg:{dur:S.dur,mesaNames:S.mesaNames},mentors:S.mentors,grid:S.grid,breaks:S.breaks||[],bookings:S.bookings,seq:0},{day:S.day,sec:S.sec,nowMs:Date.now()})}
+function CR(){return MentoriasCore.make({cfg:{dur:S.dur,gap:S.gap,mesaNames:S.mesaNames},mentors:S.mentors,grid:S.grid,breaks:S.breaks||[],bookings:S.bookings,seq:0},{day:S.day,sec:S.sec,nowMs:Date.now()})}
 function blocksOfMentor(day,mid){return S.grid.filter(g=>g.day===day&&g.mid===mid).sort((a,b)=>toMin(a.from)-toMin(b.from))}
 const mentorOf=b=>b&&b.mid?mentorById(b.mid):null;
 function breaksOf(day,mesa){return (S.breaks||[]).filter(x=>x.day===day&&x.mesa===mesa).sort((a,b)=>toMin(a.from)-toMin(b.from))}
@@ -2221,6 +2311,19 @@ function beep(){const C=audioCtx();if(!C)return;try{
 function callPerson(k){k.calls++;S.banner={name:k.name,mesa:k.mesa,calls:k.calls,until:Date.now()+12000};beep()}
 const bannerOn=()=>!!(S.banner&&S.banner.until>Date.now());
 
+/* correos de los mentores: no viajan en la vista pública, se piden con el PIN */
+async function loadEmails(){if(!S.pinValue||S.emBusy)return;S.emBusy=true;try{const r=await act("prodInfo",{});if(r&&r.ok&&r.data&&r.data.emails){S.memails=r.data.emails;if(S.view==="tablet"&&S.hostTab==="parrilla"&&!busy())renderTablet()}}finally{S.emBusy=false}}
+/* mesas que se muestran: al menos 2, y todas hasta la más alta con actividad hoy */
+function mesasEnUso(){let n=2;for(const k of S.bookings)if(k.day===S.day&&ACTIVE(k)&&k.mesa>n)n=k.mesa;return MESAS.filter(x=>x<=Math.min(5,n))}
+function mentorState(m){const day=S.day,n=S.sec/60;
+  const act=S.bookings.find(k=>k.day===day&&k.mid===m.id&&k.status==="enmesa");if(act)return ["En mentoría con "+act.name,"on"];
+  const br=(S.breaks||[]).find(x=>x.day===day&&x.mid===m.id&&n>=toMin(x.from)&&n<toMin(x.to));if(br)return ["☕ "+br.label+" hasta las "+br.to,"mid"];
+  const g=blocksOfMentor(day,m.id).find(g=>n>=toMin(g.from)&&n<toMin(g.to));if(!g)return null;
+  const w=S.bookings.filter(k=>k.day===day&&k.mid===m.id&&WAITING(k)&&(k.start+bk(k))*60>S.sec).sort((a,b)=>a.start-b.start)[0];
+  return [w?"Siguiente: "+w.name+" · "+fmt(w.start)+" · "+MNr(w.mesa):"Libre","off"]}
+const rsvpList=()=>S.bookings.filter(b=>b.rsvpNo&&WAITING(b)).sort((a,b)=>a.day-b.day||a.start-b.start);
+function rsvpBox(act){const l=rsvpList();if(!l.length)return "";
+  return `<div class="warnbox"><b>⚠️ ${l.length} persona(s) respondió «No asistiré» en Google Calendar</b>${l.map(b=>`<div class="m" style="margin:6px 0">${esc(DAYS[b.day])} · ${fmt(b.start)} · <b>${esc(b.name)}</b> · con ${esc((mentorOf(b)||{}).name||"")} · ${MN(b.mesa)} ${act?`<button type="button" class="a-no" data-pa="cancel" data-id="${b.id}">Cancelar y liberar</button>`:""}</div>`).join("")}</div>`}
 /* ---------- tablet reservas ---------- */
 function renderTablet(){
   document.querySelectorAll(".seg button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.s===S.hostTab));
@@ -2255,7 +2358,7 @@ function renderTablet(){
       h+=`</div>`;
     }
     if(!any)h+=`<p class="empty">No hay mentorías programadas para este día.</p>`;
-    h+=`</div><p class="note" style="margin-top:6px">Elige la hora: al confirmar te asignamos a uno de los mentores de la categoría y una de las 2 mesas. Un horario aparece tachado cuando todos sus mentores o las 2 mesas ya están ocupados.</p>`;
+    h+=`</div><p class="note" style="margin-top:6px">Elige la hora: al confirmar te asignamos a uno de los mentores de la categoría y una de las mesas. Un horario aparece tachado cuando todos sus mentores o todas las mesas ya están ocupados.</p>`;
   } else if(T.step==="form"){
     const isNow=T.day===S.day&&S.sec>=T.start*60;
     h+=`<form class="form" id="bookForm" novalidate>
@@ -2327,7 +2430,7 @@ function renderMentorPin(){
 function renderMentor(){
   if(LIVE&&!S.pinValue){renderMentorPin();return}
   const mesa=S.mt,day=S.day;
-  document.querySelectorAll("[data-mt]").forEach(b=>{b.textContent=MNr(+b.dataset.mt);b.setAttribute("aria-pressed",+b.dataset.mt===mesa)});
+  document.getElementById("mtChips").innerHTML=MESAS.map(n=>`<button type="button" class="chip" data-mt="${n}" aria-pressed="${n===mesa}">${MN(n)}</button>`).join("");
   const act=activeSession(day,mesa), cur=curBooking(day,mesa), R=CR();
   const shown=act||(cur&&cur.status!=="finalizada"?cur:null), m=mentorOf(shown);
   document.getElementById("mtTitle").textContent=MNr(mesa)+(m?" · "+m.name:"");
@@ -2373,12 +2476,112 @@ function renderMentor(){
   document.getElementById("mentorBody").innerHTML=h;
 }
 
+/* ---------- panel del mentor: cada mentor ve y maneja su propia agenda ---------- */
+function renderChooser(){
+  const ms=[...S.mentors].filter(m=>S.grid.some(g=>g.mid===m.id)).sort((a,b)=>TEMAS.indexOf(a.tema)-TEMAS.indexOf(b.tema)||a.name.localeCompare(b.name));
+  let h=ms.length?"":`<p class="note">Cargando mentores…</p>`;
+  TEMAS.forEach(t=>{const l=ms.filter(m=>m.tema===t);if(!l.length)return;h+=`<div class="sec-t">${esc(t)}</div><div class="mchoose">${l.map(m=>`<a href="#panel-${m.id}">${esc(m.name)}<small>${esc(m.spec)}</small></a>`).join("")}</div>`});
+  document.getElementById("chooseBody").innerHTML=h}
+const pmDay=()=>S.pDay==null?S.day:S.pDay;
+function renderPanelPin(){
+  document.getElementById("pnTitle").textContent=mentorById(S.pm).name;document.getElementById("pnSub").textContent="Ingresa el PIN una sola vez en este equipo";document.getElementById("pnDays").innerHTML="";
+  document.getElementById("panelBody").innerHTML=`<div class="pin"><h2>PIN del día</h2>
+    <div class="dots" aria-label="${S.mpinIn.length} de 4 dígitos">${[0,1,2,3].map(i=>`<span class="${i<(S.mpinBusy?4:S.mpinIn.length)?"on":""}"></span>`).join("")}</div>
+    <div class="err" role="status">${S.mpinErr}</div>
+    <div class="keys">${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" data-mpin="${n}">${n}</button>`).join("")}<span></span><button type="button" data-mpin="0">0</button><button type="button" data-mpin="b" aria-label="Borrar" style="font-size:16px">Borrar</button></div></div>`}
+function pBreakCtl(mid){const n=S.sec/60,b=(S.breaks||[]).find(x=>x.day===S.day&&x.mid===mid&&n>=toMin(x.from)&&n<toMin(x.to));
+  if(b)return `<div class="brkbox on">☕ <b>${esc(b.label)}</b> hasta las <b>${b.to}</b> · quedan <b class="tnum" data-end="${toMin(b.to)*60}">${mmss(toMin(b.to)*60-S.sec)}</b> <button type="button" data-pa="unblock" data-id="${b.id}">Volver ahora</button></div>`;
+  if(S.bookings.some(k=>k.day===S.day&&k.mid===mid&&k.status==="enmesa"))return `<div class="brkbox"><small>Para pausar, termina primero la mentoría en curso.</small></div>`;
+  return `<div class="brkbox"><span>☕ Pausar mis reuniones:</span><select data-pbl aria-label="Motivo">${["Descanso","Baño","Almuerzo","Colación","Llamada"].map(x=>`<option>${x}</option>`).join("")}</select><select data-pbm aria-label="Minutos">${[5,10,15,20,30,45,60].map(x=>`<option value="${x}"${x===15?" selected":""}>${x} min</option>`).join("")}</select><button type="button" data-pa="pause">Pausar</button></div>`}
+function pBtns(k,today,allowAsk){
+  if(S.pAsk&&S.pAsk.id===k.id&&allowAsk===false)return "";
+  if(S.pAsk&&S.pAsk.id===k.id)return `<div class="ask"><span><b>${S.pAsk.kind==="noshow"?"No llegó":"Cancelar cita"}:</b> ¿qué hago con este horario?</span><button type="button" class="a-ok" data-pm="liberar">Liberar horario</button><button type="button" class="a-no" data-pm="bloquear">Bloquear horario</button><button type="button" class="a-no" data-pm="volver">Volver</button></div>`;
+  let b="";
+  if(today&&WAITING(k)){
+    b+=`<button type="button" class="a-no" data-pa="call" data-id="${k.id}">📣 Llamar</button>`;
+    b+=k.status==="presente"?`<button type="button" class="a-ok" data-pa="start" data-id="${k.id}">▶ Iniciar mentoría</button>`:`<button type="button" class="a-ok" data-pa="arrived" data-id="${k.id}">✔ Ya llegó</button>`;
+    b+=`<button type="button" class="a-no" data-pa="noshow" data-id="${k.id}">✖ No llegó</button>`}
+  if(WAITING(k))b+=`<button type="button" class="a-no" data-pa="cancel" data-id="${k.id}">Cancelar cita</button>`;
+  return b?`<div class="acts">${b}</div>`:""}
+function pRows(mid,day){
+  const rows=[];
+  for(const g of blocksOfMentor(day,mid)){const d=durB(g);
+    for(const t of slotsOf(g)){
+      const k=S.bookings.find(x=>x.day===day&&x.mid===mid&&x.start===t&&ACTIVE(x))||null;
+      const br=(S.breaks||[]).find(x=>x.day===day&&x.mid===mid&&toMin(x.from)<t+d&&toMin(x.to)>t)||null;
+      rows.push({t,d,k,br})}}
+  for(const kk of S.bookings.filter(x=>x.day===day&&x.mid===mid&&ACTIVE(x)&&!rows.some(r=>r.k===x)))rows.push({t:kk.start,d:bk(kk),k:kk,br:null});
+  return rows.sort((a,b)=>a.t-b.t)}
+function renderPanel(){
+  if(!S.mentors.length){document.getElementById("panelBody").innerHTML=`<p class="note">Cargando…</p>`;return}
+  if(LIVE&&!S.pinValue){renderPanelPin();return}
+  const mid=S.pm,m=mentorById(mid),day=pmDay(),today=day===S.day;
+  document.getElementById("pnTitle").textContent=m.name;
+  document.getElementById("pnSub").textContent=(m.spec?m.spec+" · ":"")+(m.tema||"")+(S.label?" · "+S.label:"");
+  document.getElementById("pnDays").innerHTML=[0,1,2].map(d=>`<button type="button" class="chip" data-pd="${d}" aria-pressed="${d===day}">${esc(DAYS[d])}</button>`).join("");
+  let h="";
+  const warn=S.bookings.filter(b=>b.mid===mid&&b.rsvpNo&&WAITING(b));
+  if(warn.length)h+=`<div class="warnbox">⚠️ <b>${warn.map(b=>esc(b.name)+" ("+esc(DAYS[b.day])+" "+fmt(b.start)+")").join(", ")}</b> respondió «No asistiré» en Google Calendar. Producción gestiona la cancelación; también puedes cancelar la cita tú.</div>`;
+  if(today)h+=pBreakCtl(mid);
+  let topId=null;
+  if(today){
+    const act=S.bookings.find(k=>k.day===day&&k.mid===mid&&k.status==="enmesa");
+    const nxt=S.bookings.filter(k=>k.day===day&&k.mid===mid&&WAITING(k)&&(k.start+bk(k))*60>S.sec).sort((a,b)=>a.start-b.start)[0];
+    topId=act?act.id:nxt?nxt.id:null;
+    if(act)h+=`<div class="pcard"><div class="lbl">En mentoría · ${MN(act.mesa)} · reservado ${fmt(act.start)}</div><div class="who">${esc(act.name)}</div><div><div class="timer-l">${act.endsAt-S.sec>0?"Tiempo restante":"Tiempo cumplido"}</div><div class="timer${act.endsAt-S.sec<120?" low":""}" data-end="${act.endsAt}">${mmss(act.endsAt-S.sec)}</div></div><div class="acts"><button type="button" class="mb end" data-pa="finish" data-id="${act.id}">Terminar sesión</button></div></div>`;
+    else if(nxt)h+=`<div class="pcard"><div class="lbl">Siguiente · ${fmt(nxt.start)} – ${fmt(nxt.start+bk(nxt))} · ${MN(nxt.mesa)}</div><div class="who">${esc(nxt.name)}</div><span class="st ${nxt.status}" style="justify-self:start">${STLAB[nxt.status]}</span>${nxt.rsvpNo?` <span class="rsvp">⚠ Respondió «No asistiré»</span>`:""}${nxt.calls?`<div class="callrow">Llamados: ${[1,2,3].map(i=>`<span class="dot${nxt.calls>=i?" on":""}"></span>`).join("")} ${nxt.calls}/3</div>`:""}${pBtns(nxt,true)}</div>`;
+    else h+=`<div class="pcard"><div class="who" style="color:var(--ok)">Sin citas pendientes</div><p class="meta">Cuando alguien reserve contigo, aparecerá aquí.</p></div>`}
+  const rows=pRows(mid,day);
+  h+=`<div class="sec-t">Mi agenda · ${esc(DAYS[day])} (${rows.filter(r=>r.k).length} cita(s))</div>`;
+  if(!rows.length)h+=`<p class="note">No tienes horarios este día.</p>`;
+  h+=`<div class="ag">`+rows.map(r=>{
+    const past=day<S.day||(today&&(r.t+r.d)*60<=S.sec&&!(r.k&&(r.k.status==="enmesa"||WAITING(r.k))));
+    const k=r.k;
+    const t=`<div class="t">${fmt(r.t)}<small>hasta ${fmt(r.t+r.d)}</small></div>`;
+    if(k)return `<div class="ag-row${k.status==="enmesa"?" live":""}${past?" past":""}">${t}<div><b>${esc(k.name)}</b> · ${MN(k.mesa)}<br><span class="st ${k.status}">${STLAB[k.status]}</span>${k.rsvpNo&&WAITING(k)?` <span class="rsvp">⚠ No asistiré</span>`:""}${k.email?` <small>· con correo</small>`:""}</div>${past&&!WAITING(k)?"":pBtns(k,today,today&&topId!==k.id)}</div>`;
+    if(r.br)return `<div class="ag-row blk${past?" past":""}">${t}<div><b>${esc(r.br.label==="Bloqueado"?"Bloqueado":"☕ "+r.br.label)}</b><br><small>${r.br.label==="Bloqueado"?"No se puede reservar":"Pausa de "+r.br.from+" a "+r.br.to}</small></div>${past?"":`<div class="acts"><button type="button" class="a-no" data-pa="unblock" data-id="${r.br.id}">${r.br.label==="Bloqueado"?"Desbloquear":"Quitar pausa"}</button></div>`}</div>`;
+    return `<div class="ag-row free${past?" past":""}">${t}<div><b>Libre</b><br><small>${past?"Ya pasó":"Se puede reservar"}</small></div>${past?"":`<div class="acts"><button type="button" class="a-no" data-pa="block" data-t="${r.t}">Bloquear horario</button></div>`}</div>`}).join("")+`</div>`;
+  h+=`<p class="note" style="margin-top:12px">Al presionar «Llamar», el nombre aparece en la pantalla grande con un aviso sonoro. «Bloquear horario» deja un espacio ocupado (llamada, mensajes, pausa) para que nadie pueda reservarlo.</p>`;
+  document.getElementById("panelBody").innerHTML=h}
+(function(){
+  const pnb=document.getElementById("panelBody");
+  document.getElementById("pnDays").addEventListener("click",e=>{const b=e.target.closest("[data-pd]");if(!b)return;S.pDay=+b.dataset.pd;S.pAsk=null;renderPanel()});
+  pnb.addEventListener("click",async e=>{
+    const kp=e.target.closest("[data-mpin]");
+    if(kp){if(S.pending)return;const v=kp.dataset.mpin;
+      if(v==="b")S.mpinIn=S.mpinIn.slice(0,-1);else if(S.mpinIn.length<4)S.mpinIn+=v;S.mpinErr="";
+      if(S.mpinIn.length===4){const pin=S.mpinIn;S.mpinBusy=true;S.mpinErr="Verificando PIN…";renderPanelPin();S.mpinIn="";const r=await act("checkPin",{},pin);S.mpinBusy=false;S.mpinErr="";
+        if(r.ok){S.pinValue=pin;try{localStorage.setItem("mentorias_pin",pin)}catch(x){}renderPanel();return}
+        S.mpinErr=r.auth===false?"PIN incorrecto, intenta de nuevo":r.msg}
+      renderPanelPin();return}
+    if(S.pending)return;
+    const pm=e.target.closest("[data-pm]");
+    if(pm&&S.pAsk){const ask=S.pAsk;S.pAsk=null;if(pm.dataset.pm==="volver"){renderPanel();return}
+      const r=await act(ask.kind==="noshow"?"noShow":"cancel",{id:ask.id,mode:pm.dataset.pm});toast(r.msg);renderPanel();return}
+    const a=e.target.closest("[data-pa]");if(!a)return;
+    const id=+a.dataset.id,kind=a.dataset.pa;
+    if(kind==="noshow"||kind==="cancel"){S.pAsk={id,kind};renderPanel();return}
+    let r;
+    if(kind==="call")r=await act("call",{id});
+    else if(kind==="arrived")r=await act("presente",{id});
+    else if(kind==="start")r=await act("start",{id});
+    else if(kind==="finish")r=await act("finish",{id});
+    else if(kind==="block")r=await act("slotBlock",{mid:S.pm,day:pmDay(),start:+a.dataset.t});
+    else if(kind==="unblock")r=await act("breakDel",{id});
+    else if(kind==="pause"){const box=a.closest(".brkbox");r=await act("mentorPause",{mid:S.pm,mins:+box.querySelector("[data-pbm]").value,label:box.querySelector("[data-pbl]").value})}
+    if(r&&!r.ok)toast(r.msg);else if(r&&r.msg&&kind!=="call")toast(r.msg);
+    lastBanner=bannerOn();renderPanel()});
+})();
+
 /* ---------- pantalla TV ---------- */
 function renderTV(){
   const day=S.day;
-  let h=`<div class="tv-head"><div><h1>Mentorías Copec</h1><div class="sub">Feria Emprende tu Mente · ${DAYS[day]}${S.label?" · "+esc(S.label):""}</div></div><div style="display:flex;align-items:center;gap:2cqw"><svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="3483.52 50.47 224.32 48.82" role="img" aria-label="Copec"><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3551.558594 89.601562 C 3543.53125 89.601562 3536.996094 83.070312 3536.996094 75.039062 C 3536.996094 67.015625 3543.53125 60.484375 3551.558594 60.484375 C 3559.589844 60.484375 3566.125 67.015625 3566.125 75.039062 C 3566.125 83.070312 3559.589844 89.601562 3551.558594 89.601562 M 3551.558594 51.800781 C 3538.746094 51.800781 3528.316406 62.226562 3528.316406 75.039062 C 3528.316406 87.863281 3538.746094 98.285156 3551.558594 98.285156 C 3564.375 98.285156 3574.804688 87.863281 3574.804688 75.039062 C 3574.804688 62.226562 3564.375 51.800781 3551.558594 51.800781 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3610.554688 73.980469 C 3609.144531 75.445312 3607.253906 76.253906 3605.222656 76.253906 L 3591.667969 76.253906 L 3591.03125 75.613281 L 3591.03125 62.085938 L 3591.667969 61.453125 L 3605.027344 61.453125 C 3609.0625 61.453125 3612.46875 64.640625 3612.621094 68.5625 C 3612.695312 70.589844 3611.960938 72.511719 3610.554688 73.980469 M 3616.691406 57.585938 C 3613.640625 54.480469 3609.570312 52.769531 3605.222656 52.769531 L 3584.816406 52.769531 C 3583.449219 52.769531 3582.347656 53.875 3582.347656 55.234375 L 3582.347656 94.847656 C 3582.347656 96.214844 3583.449219 97.316406 3584.816406 97.316406 L 3588.566406 97.316406 C 3589.925781 97.316406 3591.03125 96.214844 3591.03125 94.847656 L 3591.03125 85.566406 L 3591.667969 84.933594 L 3604.953125 84.933594 C 3613.8125 84.933594 3621.144531 77.851562 3621.300781 69.144531 C 3621.382812 64.796875 3619.75 60.695312 3616.691406 57.585938 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3659.492188 52.769531 L 3629.046875 52.769531 C 3627.6875 52.769531 3626.578125 53.878906 3626.578125 55.238281 L 3626.578125 58.984375 C 3626.578125 60.347656 3627.6875 61.449219 3629.046875 61.449219 L 3659.492188 61.449219 C 3660.851562 61.449219 3661.960938 60.347656 3661.960938 58.984375 L 3661.960938 55.238281 C 3661.960938 53.878906 3660.851562 52.769531 3659.492188 52.769531 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3659.492188 88.636719 L 3629.046875 88.636719 C 3627.6875 88.636719 3626.578125 89.742188 3626.578125 91.101562 L 3626.578125 94.847656 C 3626.578125 96.214844 3627.6875 97.316406 3629.046875 97.316406 L 3659.492188 97.316406 C 3660.851562 97.316406 3661.960938 96.214844 3661.960938 94.847656 L 3661.960938 91.101562 C 3661.960938 89.742188 3660.851562 88.636719 3659.492188 88.636719 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3520.375 86.613281 C 3519.488281 85.726562 3518.070312 85.65625 3517.082031 86.4375 C 3514.292969 88.65625 3510.800781 89.777344 3507.234375 89.582031 C 3499.933594 89.1875 3494.03125 83.394531 3493.511719 76.105469 C 3493.222656 72.015625 3494.59375 68.117188 3497.382812 65.128906 C 3500.132812 62.171875 3504.015625 60.484375 3508.035156 60.484375 C 3511.199219 60.484375 3514.214844 61.484375 3516.742188 63.382812 C 3518.058594 64.371094 3519.851562 64.253906 3520.996094 63.105469 L 3523.175781 60.925781 C 3523.664062 60.4375 3523.933594 59.761719 3523.902344 59.074219 C 3523.878906 58.390625 3523.5625 57.75 3523.050781 57.3125 C 3518.449219 53.410156 3512.597656 51.46875 3506.558594 51.84375 C 3500.878906 52.195312 3495.527344 54.652344 3491.496094 58.746094 C 3487.460938 62.84375 3485.085938 68.230469 3484.820312 73.917969 C 3484.515625 80.332031 3486.785156 86.425781 3491.21875 91.074219 C 3495.65625 95.722656 3501.628906 98.28125 3508.035156 98.28125 C 3513.449219 98.28125 3518.722656 96.378906 3522.886719 92.910156 C 3523.414062 92.472656 3523.726562 91.824219 3523.757812 91.140625 C 3523.796875 90.449219 3523.527344 89.765625 3523.039062 89.277344 Z M 3520.375 86.613281 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3703.28125 86.613281 C 3702.394531 85.726562 3700.976562 85.65625 3699.988281 86.4375 C 3697.199219 88.65625 3693.699219 89.769531 3690.144531 89.582031 C 3682.839844 89.1875 3676.9375 83.394531 3676.417969 76.105469 C 3676.128906 72.015625 3677.503906 68.117188 3680.289062 65.128906 C 3683.039062 62.171875 3686.921875 60.484375 3690.945312 60.484375 C 3694.109375 60.484375 3697.121094 61.484375 3699.648438 63.382812 C 3700.964844 64.371094 3702.757812 64.253906 3703.902344 63.105469 L 3706.082031 60.925781 C 3706.570312 60.4375 3706.839844 59.761719 3706.808594 59.074219 C 3706.785156 58.390625 3706.472656 57.75 3705.957031 57.3125 C 3701.355469 53.410156 3695.496094 51.46875 3689.464844 51.84375 C 3683.785156 52.195312 3678.433594 54.652344 3674.402344 58.746094 C 3670.367188 62.84375 3667.996094 68.230469 3667.726562 73.917969 C 3667.425781 80.332031 3669.691406 86.425781 3674.125 91.074219 C 3678.5625 95.722656 3684.535156 98.28125 3690.945312 98.28125 C 3696.355469 98.28125 3701.628906 96.378906 3705.796875 92.910156 C 3706.320312 92.472656 3706.632812 91.824219 3706.664062 91.140625 C 3706.703125 90.449219 3706.441406 89.769531 3705.945312 89.277344 Z M 3703.28125 86.613281 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3658.070312 79.386719 C 3659.429688 79.386719 3660.539062 78.277344 3660.539062 76.917969 L 3660.539062 73.171875 C 3660.539062 71.804688 3659.429688 70.703125 3658.070312 70.703125 L 3639.605469 70.703125 C 3638.246094 70.703125 3637.136719 71.804688 3637.136719 73.171875 L 3637.136719 76.917969 C 3637.136719 78.277344 3638.246094 79.386719 3639.605469 79.386719 Z M 3658.070312 79.386719 "/></svg><div class="tv-clock">${fmt(nowMin())}</div></div></div><div class="tv-grid">`;
+  /* si Chrome se abrió con --autoplay-policy=no-user-gesture-required, el sonido ya funciona sin tocar la pantalla */
+  if(LIVE&&!S.soundOn){const C=audioCtx();if(C&&C.state==="running")S.soundOn=true}
+  let h=`<div class="tv-head"><div><h1>Mentorías Copec</h1><div class="sub">Feria Emprende tu Mente · ${DAYS[day]}${S.label?" · "+esc(S.label):""}</div></div><div style="display:flex;align-items:center;gap:2cqw"><svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="3483.52 50.47 224.32 48.82" role="img" aria-label="Copec"><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3551.558594 89.601562 C 3543.53125 89.601562 3536.996094 83.070312 3536.996094 75.039062 C 3536.996094 67.015625 3543.53125 60.484375 3551.558594 60.484375 C 3559.589844 60.484375 3566.125 67.015625 3566.125 75.039062 C 3566.125 83.070312 3559.589844 89.601562 3551.558594 89.601562 M 3551.558594 51.800781 C 3538.746094 51.800781 3528.316406 62.226562 3528.316406 75.039062 C 3528.316406 87.863281 3538.746094 98.285156 3551.558594 98.285156 C 3564.375 98.285156 3574.804688 87.863281 3574.804688 75.039062 C 3574.804688 62.226562 3564.375 51.800781 3551.558594 51.800781 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3610.554688 73.980469 C 3609.144531 75.445312 3607.253906 76.253906 3605.222656 76.253906 L 3591.667969 76.253906 L 3591.03125 75.613281 L 3591.03125 62.085938 L 3591.667969 61.453125 L 3605.027344 61.453125 C 3609.0625 61.453125 3612.46875 64.640625 3612.621094 68.5625 C 3612.695312 70.589844 3611.960938 72.511719 3610.554688 73.980469 M 3616.691406 57.585938 C 3613.640625 54.480469 3609.570312 52.769531 3605.222656 52.769531 L 3584.816406 52.769531 C 3583.449219 52.769531 3582.347656 53.875 3582.347656 55.234375 L 3582.347656 94.847656 C 3582.347656 96.214844 3583.449219 97.316406 3584.816406 97.316406 L 3588.566406 97.316406 C 3589.925781 97.316406 3591.03125 96.214844 3591.03125 94.847656 L 3591.03125 85.566406 L 3591.667969 84.933594 L 3604.953125 84.933594 C 3613.8125 84.933594 3621.144531 77.851562 3621.300781 69.144531 C 3621.382812 64.796875 3619.75 60.695312 3616.691406 57.585938 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3659.492188 52.769531 L 3629.046875 52.769531 C 3627.6875 52.769531 3626.578125 53.878906 3626.578125 55.238281 L 3626.578125 58.984375 C 3626.578125 60.347656 3627.6875 61.449219 3629.046875 61.449219 L 3659.492188 61.449219 C 3660.851562 61.449219 3661.960938 60.347656 3661.960938 58.984375 L 3661.960938 55.238281 C 3661.960938 53.878906 3660.851562 52.769531 3659.492188 52.769531 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3659.492188 88.636719 L 3629.046875 88.636719 C 3627.6875 88.636719 3626.578125 89.742188 3626.578125 91.101562 L 3626.578125 94.847656 C 3626.578125 96.214844 3627.6875 97.316406 3629.046875 97.316406 L 3659.492188 97.316406 C 3660.851562 97.316406 3661.960938 96.214844 3661.960938 94.847656 L 3661.960938 91.101562 C 3661.960938 89.742188 3660.851562 88.636719 3659.492188 88.636719 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3520.375 86.613281 C 3519.488281 85.726562 3518.070312 85.65625 3517.082031 86.4375 C 3514.292969 88.65625 3510.800781 89.777344 3507.234375 89.582031 C 3499.933594 89.1875 3494.03125 83.394531 3493.511719 76.105469 C 3493.222656 72.015625 3494.59375 68.117188 3497.382812 65.128906 C 3500.132812 62.171875 3504.015625 60.484375 3508.035156 60.484375 C 3511.199219 60.484375 3514.214844 61.484375 3516.742188 63.382812 C 3518.058594 64.371094 3519.851562 64.253906 3520.996094 63.105469 L 3523.175781 60.925781 C 3523.664062 60.4375 3523.933594 59.761719 3523.902344 59.074219 C 3523.878906 58.390625 3523.5625 57.75 3523.050781 57.3125 C 3518.449219 53.410156 3512.597656 51.46875 3506.558594 51.84375 C 3500.878906 52.195312 3495.527344 54.652344 3491.496094 58.746094 C 3487.460938 62.84375 3485.085938 68.230469 3484.820312 73.917969 C 3484.515625 80.332031 3486.785156 86.425781 3491.21875 91.074219 C 3495.65625 95.722656 3501.628906 98.28125 3508.035156 98.28125 C 3513.449219 98.28125 3518.722656 96.378906 3522.886719 92.910156 C 3523.414062 92.472656 3523.726562 91.824219 3523.757812 91.140625 C 3523.796875 90.449219 3523.527344 89.765625 3523.039062 89.277344 Z M 3520.375 86.613281 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3703.28125 86.613281 C 3702.394531 85.726562 3700.976562 85.65625 3699.988281 86.4375 C 3697.199219 88.65625 3693.699219 89.769531 3690.144531 89.582031 C 3682.839844 89.1875 3676.9375 83.394531 3676.417969 76.105469 C 3676.128906 72.015625 3677.503906 68.117188 3680.289062 65.128906 C 3683.039062 62.171875 3686.921875 60.484375 3690.945312 60.484375 C 3694.109375 60.484375 3697.121094 61.484375 3699.648438 63.382812 C 3700.964844 64.371094 3702.757812 64.253906 3703.902344 63.105469 L 3706.082031 60.925781 C 3706.570312 60.4375 3706.839844 59.761719 3706.808594 59.074219 C 3706.785156 58.390625 3706.472656 57.75 3705.957031 57.3125 C 3701.355469 53.410156 3695.496094 51.46875 3689.464844 51.84375 C 3683.785156 52.195312 3678.433594 54.652344 3674.402344 58.746094 C 3670.367188 62.84375 3667.996094 68.230469 3667.726562 73.917969 C 3667.425781 80.332031 3669.691406 86.425781 3674.125 91.074219 C 3678.5625 95.722656 3684.535156 98.28125 3690.945312 98.28125 C 3696.355469 98.28125 3701.628906 96.378906 3705.796875 92.910156 C 3706.320312 92.472656 3706.632812 91.824219 3706.664062 91.140625 C 3706.703125 90.449219 3706.441406 89.769531 3705.945312 89.277344 Z M 3703.28125 86.613281 "/><path fill="#FFFFFF" fill-rule="nonzero" fill-opacity="1" d="M 3658.070312 79.386719 C 3659.429688 79.386719 3660.539062 78.277344 3660.539062 76.917969 L 3660.539062 73.171875 C 3660.539062 71.804688 3659.429688 70.703125 3658.070312 70.703125 L 3639.605469 70.703125 C 3638.246094 70.703125 3637.136719 71.804688 3637.136719 73.171875 L 3637.136719 76.917969 C 3637.136719 78.277344 3638.246094 79.386719 3639.605469 79.386719 Z M 3658.070312 79.386719 "/></svg><div class="tv-clock">${fmt(nowMin())}</div></div></div><div class="tv-grid${mesasEnUso().length>2?" many":""}" style="grid-template-columns:repeat(${mesasEnUso().length},1fr)">`;
   const Rtv=CR(),nowM=nowMin(),freeNow=Rtv.mentorsNow().length>0;
-  for(const mesa of [1,2]){
+  const mesasTv=mesasEnUso();
+  for(const mesa of mesasTv){
     const act=activeSession(day,mesa),cur=curBooking(day,mesa),k=cur&&cur.status!=="finalizada"?cur:null,shown=act||k,m=mentorOf(shown);
     h+=`<div class="tv-mesa"><h2>${MN(mesa)}<small>${m?esc(m.name)+(m.tema?" · "+esc(m.tema):""):"Esperando la próxima reserva"}</small></h2>`;
     if(act){
@@ -2394,7 +2597,7 @@ function renderTV(){
     } else {
       h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">${nowM<OPEN?"Abrimos a las 10:00":nowM>=CLOSE?"Mentorías finalizadas":"Mesa en pausa"}</div><div class="meta">${nowM<OPEN?"Ya puedes reservar en la tablet del stand":nowM>=CLOSE?"Gracias por participar":"Próximo turno en breve"}</div></div></div>`;
     }
-    const nexts=upcoming(day,mesa,shown?shown.id:null).slice(0,3);
+    const nexts=upcoming(day,mesa,shown?shown.id:null).slice(0,mesasTv.length>2?2:3);
     h+=`<div class="next"><div class="lbl">PRÓXIMOS</div>`;
     if(!nexts.length)h+=`<div class="nrow"><span class="t">—</span><span class="n" style="color:#9fb2d4">Sin reservas próximas</span><span></span></div>`;
     for(const n of nexts){
@@ -2405,7 +2608,7 @@ function renderTV(){
   }
   h+=`</div><div class="tv-foot"><span>¿Aún no reservas? <b>Hazlo gratis en la tablet del stand</b></span><span>Mentorías 1 a 1 · gratis</span></div>`;
   if(LIVE&&!S.soundOn)h+=`<div class="soundgate" id="soundGate"><b>Toca la pantalla para activar el sonido</b><span>Solo una vez, al encender la pantalla</span></div>`;
-  if(bannerOn())h+=`<div class="banner" role="alert"><div class="l">LLAMADO ${S.banner.calls} DE 3</div><div class="n">${esc(S.banner.name)}</div><div class="m">Acércate a ${MN(S.banner.mesa)}</div><div class="c">Stand Copec · Mentorías</div></div>`;
+  if(bannerOn())h+=`<div class="banner" role="alert"><div class="l">LLAMADO ${S.banner.calls} DE 3</div><div class="n">${esc(S.banner.name)}</div><div class="m">Acércate a ${MN(S.banner.mesa)}${S.banner.mentor?" · con "+esc(S.banner.mentor):""}</div><div class="c">Stand Copec · Mentorías</div></div>`;
   document.getElementById("tvScreen").innerHTML=h;
 }
 
@@ -2414,8 +2617,8 @@ function durOpts(sel){let o="";for(let v=15;v<=60;v+=5)o+=`<option value="${v}"$
 function blockStats(g){const sl=slotsOf(g),d=durB(g);const taken=sl.filter(t=>S.bookings.some(k=>k.day===g.day&&k.mid===g.mid&&k.start===t&&OCCUPIES(k))).length;return {n:sl.length,taken,free:sl.length-taken,d}}
 function mentorStats(mid){let n=0,taken=0;for(const g of S.grid)if(g.mid===mid){const x=blockStats(g);n+=x.n;taken+=x.taken}return {n,taken}}
 /* cupos reales por día: lo que cubren los mentores, con las 2 mesas como tope */
-function capDay(d){const iv=S.grid.filter(g=>g.day===d).map(g=>[toMin(g.from),toMin(g.to)]).sort((a,b)=>a[0]-b[0]);let tot=0,cur=null;for(const [f,t] of iv){if(!cur||f>cur[1]){if(cur)tot+=cur[1]-cur[0];cur=[f,t]}else cur[1]=Math.max(cur[1],t)}if(cur)tot+=cur[1]-cur[0];return Math.floor(tot*2/S.dur)}
-function nmPrevText(){const N=S.nm,f=toMin(N.from),t=toMin(N.to),d=+N.dur||S.dur;if(t<=f)return "Elige una hora de término posterior al inicio.";const n=Math.floor((t-f)/d);return `Con reuniones de ${d} min caben <b>${n}</b> reuniones por día (${N.from}–${N.to}).`+((t-f)%d?` Sobran ${(t-f)%d} min al final.`:"")}
+function capDay(d){let n=0;for(const g of S.grid)if(g.day===d)n+=slotsOf(g).length;return n}
+function nmPrevText(){const N=S.nm,f=toMin(N.from),t=toMin(N.to),d=+N.dur||S.dur;if(t<=f)return "Elige una hora de término posterior al inicio.";const g=+S.gap>=0?+S.gap:10,n=Math.floor((t-f+g)/(d+g));return `Con reuniones de ${d} min y ${g} min de intervalo caben <b>${n}</b> reuniones por día (${N.from}–${N.to}).`}
 function timeOpts(sel){let o="";for(let t=OPEN;t<=CLOSE;t+=5){o+=`<option value="${fmt(t)}"${fmt(t)===sel?" selected":""}>${fmt(t)}</option>`}return o}
 /* ---------- métricas ---------- */
 function rng(seed){return ()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
@@ -2535,7 +2738,7 @@ function renderRecepcion(){
     h+=`<div class="pl-top">${[0,1,2].map(d=>`<div class="pl-kpi"><b>${cnt(d)} / ${cap(d)}</b><span>${DAYS[d]} · horarios tomados${d===S.day?" · hoy":""}</span></div>`).join("")}</div>
     <div class="pl-f">
       <select id="pfDay" aria-label="Filtrar por día"><option value="all">Los 3 días</option>${[0,1,2].map(d=>`<option value="${d}"${String(d)===S.pf.day?" selected":""}>${DAYS[d]}</option>`).join("")}</select>
-      <select id="pfMesa" aria-label="Filtrar por mesa"><option value="all">Ambas mesas</option><option value="1"${S.pf.mesa==="1"?" selected":""}>${MN(1)}</option><option value="2"${S.pf.mesa==="2"?" selected":""}>${MN(2)}</option></select>
+      <select id="pfMesa" aria-label="Filtrar por mesa"><option value="all">Todas las mesas</option>${MESAS.map(n=>`<option value="${n}"${S.pf.mesa===String(n)?" selected":""}>${MN(n)}</option>`).join("")}</select>
       <input type="search" id="pfQ" placeholder="Buscar nombre o mentor" value="${esc(S.pf.q)}" aria-label="Buscar">
       <label><input type="checkbox" id="pfAll" ${S.pf.all?"checked":""}> Incluir cancelados y no llegó</label>
     </div>
@@ -2554,7 +2757,8 @@ function renderRecepcion(){
       if(b.status==="reservado")acts=`<div class="acts">${callBtn}${today?`<button type="button" class="a-ok" data-ra="presente" data-id="${b.id}">Llegó al stand</button>`:""}${canBtn}${delBtn(b)}</div>`;
       else if(b.status==="presente")acts=`<div class="acts">${callBtn}${canBtn}${delBtn(b)}</div>`;
       else if(b.status!=="enmesa")acts=`<div class="acts">${delBtn(b)}</div>`;
-      return `<div class="card bk"><div class="t tnum">${fmt(b.start)}</div><div><div class="n">${esc(b.name)}</div><div class="m">${esc(DAYS[b.day])} · ${MN(b.mesa)} · ${esc(m?m.name:"")}${b.calls?" · "+b.calls+" llamado(s)":""}${b.email?" · con correo":""}</div><span class="st ${b.status}">${STLAB[b.status]}</span>${b.status==="enmesa"?`<span class="cdl tnum" data-end="${end}">${mmss(end-S.sec)}</span>`:""}${acts}</div></div>`};
+      return `<div class="card bk"><div class="t tnum">${fmt(b.start)}</div><div><div class="n">${esc(b.name)}</div><div class="m">${esc(DAYS[b.day])} · ${MN(b.mesa)} · ${esc(m?m.name:"")}${b.calls?" · "+b.calls+" llamado(s)":""}${b.email?" · con correo":""}</div><span class="st ${b.status}">${STLAB[b.status]}</span>${b.rsvpNo&&WAITING(b)?` <span class="rsvp">⚠ Respondió «No asistiré» en Calendar</span>`:""}${b.status==="enmesa"?`<span class="cdl tnum" data-end="${end}">${mmss(end-S.sec)}</span>`:""}${acts}</div></div>`};
+    h+=rsvpBox(true).replace(/data-pa="cancel"/g,'data-ra="cancelnow"');
     const todayL=S.bookings.filter(b=>b.day===S.day).sort(srt);
     const up=todayL.filter(isUp),past=todayL.filter(b=>!isUp(b));
     h+=`<div class="sec-t">${esc(DAYS[S.day])} (hoy) · próximos y en curso (${up.length})</div><div class="rc-list">${up.map(card).join("")||`<p class="note">No hay reservas próximas hoy.</p>`}</div>`;
@@ -2562,11 +2766,15 @@ function renderRecepcion(){
     for(const d of [0,1,2]){if(d===S.day)continue;const l=S.bookings.filter(b=>b.day===d).sort(srt);
       h+=`<div class="sec-t">${esc(DAYS[d])} · ${l.length} reserva(s)</div><div class="rc-list">${l.map(card).join("")||`<p class="note">Sin reservas.</p>`}</div>`}
   } else {
+    if(S.memails===null&&S.pinValue)loadEmails();
     h+=`<div class="pg"><div style="display:grid;gap:14px">
       <div class="pg-card"><h3>Ajustes</h3>
         <div class="setting"><span>Reservas para otros días</span><button type="button" class="switch" role="switch" id="swDays" aria-checked="${S.allowOtherDays}" aria-label="Permitir reservas para otros días"></button></div>
-        ${[1,2].map(i=>`<div class="setting"><label for="mname${i}">Nombre de la mesa ${i}</label><input id="mname${i}" data-mname="${i}" maxlength="24" value="${esc(MNr(i))}" style="width:auto"></div>`).join("")}
+        ${MESAS.map(i=>`<div class="setting"><label for="mname${i}">Nombre de la mesa ${i}</label><input id="mname${i}" data-mname="${i}" maxlength="24" value="${esc(MNr(i))}" style="width:auto"></div>`).join("")}
         <div class="setting"><label for="durSel">Duración por defecto de los bloques nuevos</label><select id="durSel" style="width:auto;min-width:96px">${durOpts(S.dur)}</select></div>
+        <div class="setting"><label for="gapSel">Intervalo entre reuniones</label><select id="gapSel" style="width:auto;min-width:96px">${[0,5,10,15,20,30].map(v=>`<option value="${v}"${v===+S.gap?" selected":""}>${v===0?"Sin intervalo":v+" min"}</option>`).join("")}</select></div>
+        <div class="setting"><span>Invitaciones de Google Calendar</span><button type="button" class="switch" role="switch" id="swCal" aria-checked="${S.calendar}" aria-label="Enviar invitaciones de Google Calendar"></button></div>
+        <p class="note">Con 20 min y ${+S.gap} min de intervalo, las reuniones son a las 14:00, 14:${String(20+ +S.gap).padStart(2,"0")}… (el intervalo solo se cambia sin reservas activas). Con Calendar encendido, cada reserva crea una cita en agenda.copec@gmail.com y la envía al mentor y, si dejó correo, a la persona. Mantenlo apagado mientras pruebas, para no enviar invitaciones reales a los mentores.</p>
       </div>
       <div class="pg-card"><h3>Fechas y lugar</h3>
         ${[0,1,2].map(i=>`<div class="setting"><label for="fecha${i}">${DAYS[i]}</label><input type="date" id="fecha${i}" data-fecha="${i}" value="${esc((S.fechas||[])[i]||"")}" style="width:auto"></div>`).join("")}
@@ -2588,13 +2796,14 @@ function renderRecepcion(){
         </form>
       </div>
       <div class="pg-card"><h3>Mentores del evento</h3><p class="note">Nombre, cargo y categoría de cada mentor. Los que no tienen bloques aún no reciben reservas: asígnales horario en la categoría correspondiente.</p>
-        ${[...S.mentors].sort((a,b)=>TEMAS.indexOf(a.tema)-TEMAS.indexOf(b.tema)||a.name.localeCompare(b.name)).map(m=>`<div class="mrow"><input data-mm="${m.id}" data-f="name" value="${esc(m.name)}" aria-label="Nombre del mentor"><input data-mm="${m.id}" data-f="spec" value="${esc(m.spec)}" aria-label="Cargo" placeholder="Cargo"><button type="button" class="del" data-delm="${m.id}" aria-label="Quitar mentor">✕</button></div><div class="mdays"><span class="dchip on" title="Reuniones posibles y reservadas en los días que participa">${(()=>{const x=mentorStats(m.id);return x.n+" reuniones · "+x.taken+" reservadas"})()}</span><select data-mm="${m.id}" data-f="tema" aria-label="Tema del mentor">${TEMAS.map(x=>`<option${x===m.tema?" selected":""}>${esc(x)}</option>`).join("")}</select>${[0,1,2].map(d=>{const bl=S.grid.filter(g=>g.mid===m.id&&g.day===d);return `<span class="dchip${bl.length?" on":""}" title="${bl.length?bl.map(b=>b.from+"–"+b.to).join(", "):"Sin bloques"}">${DAYS[d]}${bl.length?" · "+bl.map(b=>"M"+b.mesa+" "+b.from+"–"+b.to).join(", "):""}</span>`}).join("")}</div>`).join("")}
+        ${[...S.mentors].sort((a,b)=>TEMAS.indexOf(a.tema)-TEMAS.indexOf(b.tema)||a.name.localeCompare(b.name)).map(m=>`<div class="mrow"><input data-mm="${m.id}" data-f="name" value="${esc(m.name)}" aria-label="Nombre del mentor"><input data-mm="${m.id}" data-f="spec" value="${esc(m.spec)}" aria-label="Cargo" placeholder="Cargo"><button type="button" class="del" data-delm="${m.id}" aria-label="Quitar mentor">✕</button></div><div class="mrow" style="grid-template-columns:1fr 30px"><input data-mm="${m.id}" data-f="email" type="email" value="${esc((S.memails||{})[m.id]||"")}" aria-label="Correo corporativo de ${esc(m.name)}" placeholder="Correo corporativo (para su invitación de Calendar)"><a class="del" href="#panel-${m.id}" title="Abrir el panel de ${esc(m.name)}" aria-label="Abrir el panel de ${esc(m.name)}" style="text-decoration:none;text-align:center">↗</a></div><div class="mdays"><span class="dchip on" title="Reuniones posibles y reservadas en los días que participa">${(()=>{const x=mentorStats(m.id);return x.n+" reuniones · "+x.taken+" reservadas"})()}</span><select data-mm="${m.id}" data-f="tema" aria-label="Tema del mentor">${TEMAS.map(x=>`<option${x===m.tema?" selected":""}>${esc(x)}</option>`).join("")}</select>${[0,1,2].map(d=>{const bl=S.grid.filter(g=>g.mid===m.id&&g.day===d);return `<span class="dchip${bl.length?" on":""}" title="${bl.length?bl.map(b=>b.from+"–"+b.to).join(", "):"Sin bloques"}">${DAYS[d]}${bl.length?" · "+bl.map(b=>"M"+b.mesa+" "+b.from+"–"+b.to).join(", "):""}</span>`}).join("")}</div>`).join("")}
       </div>
       <div class="pg-card"><h3>Agregar mentor nuevo</h3>
         <p class="note">Elige los días en que participa y su horario (por ejemplo 10:00–13:00 para la mañana). Si no eliges días, queda en la lista sin bloques.</p>
         <form id="newMForm" style="display:grid;gap:8px">
           <input id="nmName" placeholder="Nombre del mentor" value="${esc(S.nm.name)}" aria-label="Nombre del mentor nuevo" autocomplete="off">
           <input id="nmSpec" placeholder="Cargo (ej. Gerente de Estaciones)" value="${esc(S.nm.spec)}" aria-label="Cargo del mentor nuevo" autocomplete="off">
+          <input id="nmEmail" type="email" placeholder="Correo corporativo" value="${esc(S.nm.email||"")}" aria-label="Correo corporativo del mentor nuevo" autocomplete="off">
           <select id="nmTema" aria-label="Tema del mentor nuevo">${TEMAS.map(x=>`<option${x===S.nm.tema?" selected":""}>${esc(x)}</option>`).join("")}</select>
           <div class="nmdays" role="group" aria-label="Días que participa">${[0,1,2].map(d=>`<label><input type="checkbox" class="nmDay" value="${d}" ${S.nm.days.includes(d)?"checked":""}> ${DAYS[d]}</label>`).join("")}</div>
           <div class="brow" style="grid-template-columns:1fr 1fr"><select id="nmFrom" aria-label="Desde">${timeOpts(S.nm.from)}</select><select id="nmTo" aria-label="Hasta">${timeOpts(S.nm.to)}</select></div>
@@ -2608,7 +2817,7 @@ function renderRecepcion(){
     const cov=BLOQS.map(bq=>{const per=TEMAS.map(tm=>R.mentorsOf(tm).filter(m=>inBq(m,bq))),tot=per.reduce((a,l)=>a+l.length,0),cats=per.filter(l=>l.length).length;
       const est=tot===0?["Sin mentores","off"]:tot>=4?["Sobrecarga (+"+(tot-2)+")","hi"]:(tot>=2&&cats>=2)?["Cubierto","ok"]:["Frágil","lo"];return {bq,per,est}});
     h+=`<div class="pg-card"><h3>Cobertura · ${DAYS[S.day]}</h3><div class="pl-wrap"><table class="kx cov"><thead><tr><th>Bloque</th>${TEMAS.map(t=>`<th>${esc(t)}</th>`).join("")}<th>Estado</th></tr></thead><tbody>${cov.map(c=>`<tr><td><b>${c.bq[0]}</b><br><small>${fmt(c.bq[1])}–${fmt(c.bq[2])}</small></td>${c.per.map(l=>`<td>${l.length?l.map(m=>esc(m.name)).join("<br>"):"—"}</td>`).join("")}<td><span class="est ${c.est[1]}">${c.est[0]}</span></td></tr>`).join("")}</tbody></table></div>
-      <p class="note">Cubierto: 2 o 3 mentores en el bloque · Frágil: 1 mentor o 1 sola categoría · Sobrecarga: 4 o más mentores para las 2 mesas. Las 2 mesas se comparten: atienden a quien tenga reserva, de cualquier categoría.</p></div>`;
+      <p class="note">Cubierto: 2 o 3 mentores en el bloque · Frágil: 1 mentor o 1 sola categoría · Sobrecarga: 4 o más mentores en el bloque (criterio del plan de Copec). Hay 5 mesas disponibles, compartidas por todos los mentores.</p></div>`;
     TEMAS.forEach((tm,ti)=>{
       const ms=S.mentors.filter(m=>m.tema===tm).sort((a,b)=>a.name.localeCompare(b.name));
       const rows=ms.flatMap(m=>blocksOfMentor(S.day,m.id)).sort((a,b)=>toMin(a.from)-toMin(b.from)||mentorById(a.mid).name.localeCompare(mentorById(b.mid).name));
@@ -2651,7 +2860,7 @@ function renderAll(){
   if(!LIVE)document.getElementById("hint").textContent=(DEMO?"Modo presentación: fuera del horario de la feria, el prototipo simula que son las 15:10 y el reloj avanza solo. ":"")+HINTS[S.view==="tablet"?(S.hostTab==="reserva"?"tablet":S.hostTab):S.view];
   updateClock();
   if(S.view==="home")return;
-  ({tablet:renderTablet,mentor:renderMentor,pantalla:renderTV,produccion:renderProd})[S.view]();
+  ({tablet:renderTablet,mentor:renderMentor,panel:renderPanel,mentores:renderChooser,pantalla:renderTV,produccion:renderProd})[S.view]();
 }
 function updateClock(){const s=S.sec;document.getElementById("simClock").textContent=fmt(Math.floor(s/60))+":"+String(s%60).padStart(2,"0")}
 function updateCounters(){
@@ -2668,7 +2877,9 @@ function route(){
   if(LIVE){const v=(location.hash||"").slice(1);
     try{if(v==="produccion"||v==="")sessionStorage.removeItem("fromProd");document.body.classList.toggle("fromprod",sessionStorage.getItem("fromProd")==="1"&&v!=="produccion"&&v!=="")}catch(e){}
     if(v==="anfitriona"||v==="tablet")S.view="tablet";
-    else if(v==="mentor-1"||v==="mentor-2"){S.view="mentor";S.mt=+v.slice(-1);if(!S.pinValue){try{S.pinValue=localStorage.getItem("mentorias_pin")}catch(e){}}}
+    else if(/^mentor-[1-5]$/.test(v)){S.view="mentor";S.mt=+v.slice(-1);if(!S.pinValue){try{S.pinValue=localStorage.getItem("mentorias_pin")}catch(e){}}}
+    else if(v==="mentores")S.view="mentores";
+    else if(/^panel-\d+$/.test(v)){S.view="panel";S.pm=+v.slice(6);S.pDay=null;if(!S.pinValue){try{S.pinValue=localStorage.getItem("mentorias_pin")}catch(e){}}}
     else if(v==="pantalla")S.view="pantalla";
     else if(v==="produccion"){S.view="tablet";S.prodMode=true;S.hostTab="pin";S.pinTarget="live";S.pinIn="";S.pinErr="";
       S.pinValue=null;S.unlocked=false}
@@ -2678,7 +2889,7 @@ function route(){
 
 /* ---------- Producción ---------- */
 const ROLNOM={anfitriona:"Anfitriona",visor:"Visor",produccion:"Producción"};
-const rolNom=r=>r==="mesa1"?MNr(1)+" (mentor)":r==="mesa2"?MNr(2)+" (mentor)":(ROLNOM[r]||"Sistema");
+const rolNom=r=>/^mesa[1-5]$/.test(r)?MNr(+r.slice(4))+" (tablet de mesa)":r==="mentores"?"Paneles de mentores":(ROLNOM[r]||"Sistema");
 async function prodFetch(){
   if(!LIVE||S.prodBusy||!S.pinValue)return;S.prodBusy=true;
   try{const res=await fetch(CFG.api,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"prodInfo",payload:{},pin:S.pinValue,role:"produccion"})});
@@ -2694,11 +2905,13 @@ function renderProd(){
   document.getElementById("tabTitle").textContent="Producción · control en vivo";
   const D=S.prod||{hb:{},log:[],srvMs:Date.now()};
   document.getElementById("tabSub").innerHTML=DAYS[S.day]+" · "+fmt(nowMin())+" hrs"+(S.label?" · "+esc(S.label):"")+" · 🔓 desbloqueado <button type=\"button\" class=\"lockbtn\" id=\"lockNow\">🔒 Bloquear</button>";
-  const eq=["anfitriona","mesa1","mesa2","visor"].map(r=>{const t=D.hb[r],age=t?Math.max(0,(D.srvMs-t)/1000):null;
+  const eq=["anfitriona","mentores","visor",...MESAS.map(n=>"mesa"+n).filter(r=>D.hb[r])].map(r=>{const t=D.hb[r],age=t?Math.max(0,(D.srvMs-t)/1000):null;
     const cl=age===null?"off":age<15?"on":age<60?"mid":"off";const tx=age===null?"Sin señal desde que se abrió el sistema":age<15?"En línea":age<60?"Señal débil · hace "+Math.round(age)+" s":"Sin señal · hace "+(age<3600?Math.round(age/60)+" min":"más de 1 h");
     return `<div class="${cl}"><b>${esc(rolNom(r))}</b><span>${tx}</span></div>`}).join("");
-  let h=`<div class="prod-eq">${eq}</div><div class="prod-links"><a href="#mentor-1" data-fp="1">Abrir ${MN(1)}</a><a href="#mentor-2" data-fp="1">Abrir ${MN(2)}</a><a href="#pantalla" data-fp="1">Abrir visor</a></div><div class="prod-mesas">`;
-  for(const mesa of [1,2]){
+  let h=`<div class="prod-eq">${eq}</div><div class="prod-links"><a href="#mentores" data-fp="1">Abrir paneles de mentores</a><a href="#pantalla" data-fp="1">Abrir visor</a></div>${rsvpBox(true)}`;
+  const ms=S.mentors.map(m=>[m,mentorState(m)]).filter(x=>x[1]);
+  h+=`<div class="pg-card"><h3>Mentores ahora (${ms.length})</h3>${ms.length?`<table class="kx"><tbody>${ms.map(([m,st])=>`<tr><td><b>${esc(m.name)}</b><br><small>${esc(m.tema||"")}</small></td><td>${esc(st[0])}</td></tr>`).join("")}</tbody></table>`:`<p class="note">No hay mentores en su horario en este momento.</p>`}</div><div class="prod-mesas">`;
+  for(const mesa of mesasEnUso()){
     const act=activeSession(S.day,mesa),cb=curBooking(S.day,mesa),m=mentorOf(act||(cb&&cb.status!=="finalizada"?cb:null));
     const wait=S.bookings.filter(b=>b.day===S.day&&b.mesa===mesa&&WAITING(b)&&(b.start+bk(b))*60>S.sec).sort((a,b)=>a.start-b.start);
     h+=`<div class="pg-card"><h3>${MN(mesa)}${m?" · "+esc(m.name):""}</h3>${breakCtl(mesa)}<p class="note">${m?esc(m.spec)+" · "+esc(m.tema||""):"Sin reserva en este momento"}</p>`;
@@ -2713,7 +2926,7 @@ function renderProd(){
     <div class="pg-card" style="margin-top:12px"><h3>Bitácora · lo último que hicieron los equipos</h3><div class="prod-log">${D.log.length?D.log.map(l=>`<div><time>${hhmmss(l.t)}</time><b>${esc(rolNom(l.r))}</b> · ${esc(l.x)}</div>`).join(""):`<p class="note">Aún no hay movimientos.</p>`}</div></div>
     <div class="pg-card" style="margin-top:12px"><h3>Borrar todas las reservas</h3><p class="note">Elimina las reservas de los 3 días y deja las métricas en cero. Úsalo después de las pruebas, antes de la feria. No se puede deshacer.</p><button type="button" class="add${S.sureClearP?" sure":""}" id="prodClear" style="border-style:solid">${S.sureClearP?"Toca otra vez para borrar TODO":"🗑 Borrar todas las reservas"}</button></div>
     <div class="pg-card" style="margin-top:12px"><h3>Nombres de las mesas</h3><p class="note">Aparecen en el visor, las tablets, la confirmación y el correo.</p>
-      ${[1,2].map(i=>`<div class="setting"><label for="mname${i}">Mesa ${i}</label><input id="mname${i}" data-mname="${i}" maxlength="24" value="${esc(MNr(i))}" style="width:auto"></div>`).join("")}</div>
+      ${MESAS.map(i=>`<div class="setting"><label for="mname${i}">Mesa ${i}</label><input id="mname${i}" data-mname="${i}" maxlength="24" value="${esc(MNr(i))}" style="width:auto"></div>`).join("")}</div>
     <p class="note" style="margin-top:12px">Desde las pestañas de arriba producción puede hacer todo lo que hace la anfitriona: Nueva reserva, Recepción, Parrilla, Plano general, Métricas y el cambio de PIN (en Parrilla).</p>`;
   el.innerHTML=h;
 }
@@ -2778,7 +2991,7 @@ tb.addEventListener("submit",async e=>{
 });
 
 /* tablet mentor */
-document.querySelectorAll("[data-mt]").forEach(b=>b.addEventListener("click",()=>{S.mt=+b.dataset.mt;renderMentor()}));
+document.getElementById("mtChips").addEventListener("click",e=>{const b=e.target.closest("[data-mt]");if(!b)return;S.mt=+b.dataset.mt;renderMentor()});
 const mb=document.getElementById("mentorBody");
 mb.addEventListener("click",async e=>{
   const a=e.target.closest("[data-ma]");if(!a||a.disabled||S.pending)return;
@@ -2809,13 +3022,13 @@ document.querySelector(".seg").addEventListener("click",e=>{const b=e.target.clo
   else{S.hostTab="pin";S.pinTarget=t;S.pinIn="";S.pinErr=""}
   renderAll()});
 document.getElementById("tabSub").addEventListener("click",e=>{if(e.target.closest("#lockNow")){S.unlocked=false;S.pinValue=null;try{localStorage.removeItem("mentorias_pin")}catch(x){}if(S.prodMode){S.hostTab="pin";S.pinTarget="live";S.pinIn="";S.pinErr=""}else S.hostTab="reserva";renderAll()}});
-tb.addEventListener("input",e=>{const t=e.target;if(t.id==="nmName")S.nm.name=t.value;if(t.id==="nmSpec")S.nm.spec=t.value});
+tb.addEventListener("input",e=>{const t=e.target;if(t.id==="nmName")S.nm.name=t.value;if(t.id==="nmSpec")S.nm.spec=t.value;if(t.id==="nmEmail")S.nm.email=t.value.trim()});
 tb.addEventListener("change",e=>{const t=e.target;
   if(t.classList&&t.classList.contains("nmDay")){S.nm.days=[...document.querySelectorAll(".nmDay:checked")].map(x=>+x.value)}
   if(t.id==="nmTema")S.nm.tema=t.value;if(t.id==="nmFrom")S.nm.from=t.value;if(t.id==="nmTo")S.nm.to=t.value;if(t.id==="nmDur")S.nm.dur=+t.value;if(/^nm(From|To|Dur)$/.test(t.id||"")){const p=document.getElementById("nmPrev");if(p)p.innerHTML=nmPrevText()}});
 tb.addEventListener("submit",async e=>{if(e.target.id!=="newMForm")return;e.preventDefault();e.stopImmediatePropagation();if(S.pending)return;
-  const N=S.nm;const r=await act("mentorAdd",{name:N.name,spec:N.spec,tema:N.tema,days:N.days,from:N.from,to:N.to,dur:N.dur});
-  N.ok=!!(r.ok&&r.data&&r.data.added);N.msg=esc(r.msg||"");if(r.ok&&N.ok){N.name="";N.spec=""}
+  const N=S.nm;const r=await act("mentorAdd",{name:N.name,spec:N.spec,email:N.email||"",tema:N.tema,days:N.days,from:N.from,to:N.to,dur:N.dur});
+  N.ok=!!(r.ok&&r.data&&r.data.added);N.msg=esc(r.msg||"");if(r.ok){N.name="";N.spec="";N.email="";loadEmails()}
   document.activeElement&&document.activeElement.blur();renderTablet()},true);
 tb.addEventListener("submit",async e=>{if(e.target.id!=="pinForm")return;e.preventDefault();e.stopImmediatePropagation();if(S.pending)return;
   const a=document.getElementById("pinNew").value.trim(),b=document.getElementById("pinNew2").value.trim();
@@ -2844,11 +3057,13 @@ rb.addEventListener("click",e=>{
     S.sureDel=null;
     if(a.dataset.ra==="presente"){S.sure=null;staff("presente",{id})}
     if(a.dataset.ra==="call"){S.sure=null;if(LIVE)beep();staff("call",{id}).then(()=>{lastBanner=bannerOn()})}
+    if(a.dataset.ra==="cancelnow"){S.sure=null;staff("cancel",{id,mode:"liberar"});return}
     if(a.dataset.ra==="cancel"){if(S.sure===id){S.sure=null;staff("cancel",{id})}else{S.sure=id;renderRecepcion()}}
     return}
   if(e.target.closest("#clearAll")){if(S.sureClear){S.sureClear=false;staff("clearBookings",{},"Todas las reservas fueron borradas")}else{S.sureClear=true;renderRecepcion()}return}
   if(S.sureClear){S.sureClear=false}
   if(e.target.closest("#swDays")){staff("setCfg",{key:"allowOtherDays",value:!S.allowOtherDays});return}
+  if(e.target.closest("#swCal")){staff("setCfg",{key:"calendar",value:!S.calendar});return}
   const dg=e.target.closest("[data-delg]");if(dg){staff("gridDel",{id:+dg.dataset.delg});return}
   const dm=e.target.closest("[data-delm]");if(dm){staff("mentorDel",{id:+dm.dataset.delm});return}
   const ag=e.target.closest("[data-addg]");if(ag){const sel=document.getElementById("addgM"+ag.dataset.addg);staff("gridAdd",{day:S.day,mid:sel?+sel.value:0});return}
@@ -2857,11 +3072,12 @@ rb.addEventListener("click",e=>{
 rb.addEventListener("change",e=>{
   const t=e.target;
   if(t.dataset.g){t.blur();staff("gridSet",{id:+t.dataset.g,field:t.dataset.f,value:(t.dataset.f==="mid"||t.dataset.f==="dur")?+t.value:t.value});return}
-  if(t.dataset.mm){t.blur();staff("mentorSet",{id:+t.dataset.mm,field:t.dataset.f,value:t.value});return}
+  if(t.dataset.mm){t.blur();staff("mentorSet",{id:+t.dataset.mm,field:t.dataset.f,value:t.value}).then(r=>{if(r&&r.ok&&t.dataset.f==="email")loadEmails()});return}
   if(t.dataset.fecha!=null){t.blur();staff("setCfg",{key:"fecha",i:+t.dataset.fecha,value:t.value});return}
   if(t.id==="ensayoSel"){t.blur();staff("setCfg",{key:"ensayo",value:t.value});return}
   if(t.id==="ubicacionIn"){t.blur();staff("setCfg",{key:"ubicacion",value:t.value});return}
   if(t.id==="durSel"){t.blur();staff("setCfg",{key:"dur",value:+t.value});return}
+  if(t.id==="gapSel"){t.blur();staff("setCfg",{key:"gap",value:+t.value});return}
 });
 
 document.addEventListener("click",async e=>{
