@@ -23,7 +23,7 @@
  */
 var MentoriasCore = (function () {
   "use strict";
-  var OPEN = 600, CLOSE = 1140, GRACE = 5, MAXCALLS = 3, DAYS = 3, MESAS = [1, 2, 3, 4, 5];
+  var OPEN = 600, CLOSE = 1140, GRACE = 5, MAXCALLS = 3, DAYS = 3, MESAS = [1, 2, 3, 4];
   var LABEL_DIAS = ["Jueves 19", "Viernes 20", "Sábado 21"];
   var TEMAS = ["Nueva Conveniencia", "Nueva Movilidad", "Nuevas Energías", "Vinculación con el Medio"];
 
@@ -68,7 +68,7 @@ var MentoriasCore = (function () {
       bl.forEach(function (g) {
         var used = {};
         bl.forEach(function (o) { if (by[o.id] && o !== g && overlap(toMin(g.from), toMin(g.to), toMin(o.from), toMin(o.to))) used[by[o.id]] = 1; });
-        var m = mentorById(g.mid), pref = [mine[g.mid], m ? TEMAS.indexOf(m.tema) + 1 : 0, 5].concat(MESAS);
+        var m = mentorById(g.mid), pref = [mine[g.mid], m ? TEMAS.indexOf(m.tema) + 1 : 0].concat(MESAS);
         var pick = 0; for (var i = 0; i < pref.length; i++) { if (pref[i] >= 1 && !used[pref[i]]) { pick = pref[i]; break; } }
         by[g.id] = pick || 1; if (!mine[g.mid]) mine[g.mid] = by[g.id];
       });
@@ -334,7 +334,7 @@ var MentoriasCore = (function () {
     return { A: A, mesaPlan: mesaPlan, mentorById: mentorById, slotsOf: slotsOf, slotsFor: slotsFor, blocksOfMentor: blocksOfMentor, mentorsOf: mentorsOf, mentorsNow: mentorsNow, dk: dk, durB: durB, waiting: waiting, occupies: occupies, mn: mn, breakNow: breakNow, breakOver: breakOver, breakOverM: breakOverM, mesaBusy: mesaBusy, gap: gapC, bookingAtMesa: bookingAtMesa, activeSession: activeSession, secsLeft: secsLeft, loadOf: loadOf };
   }
 
-  function defNames() { var o = {}; MESAS.forEach(function (n) { o[n] = TEMAS[n - 1] || "Mesa adicional"; }); return o; }
+  function defNames() { var o = {}; MESAS.forEach(function (n) { o[n] = TEMAS[n - 1] || "Mesa " + n; }); return o; }
   var PUBLIC = { book: true };
   var MENTOR_OWN = { call: true, presente: true, start: true, finish: true, noShow: true, cancel: true };
 
@@ -2238,7 +2238,7 @@ function demoSeeds(){
 if(LIVE){S.mentors=[];S.grid=[];S.bookings=[]}else S.bookings=demoSeeds();
 
 /* ---------- datos: en demo se guardan en esta página; en modo real, en Google Sheets ---------- */
-const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,gap:10,calendar:false,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio",5:"Mesa adicional"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
+const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,gap:10,calendar:false,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
 let lastCallSeen=null,firstLoad=true;
 function adoptCall(lc,serverNow){
   const key=lc?lc.at+"-"+lc.id+"-"+lc.calls:null;
@@ -2248,11 +2248,11 @@ function adoptCall(lc,serverNow){
   if(fresh){S.banner={name:lc.name,mesa:lc.mesa,mentor:lc.mentor||"",calls:lc.calls,until:Date.now()+12000};if(!LIVE||S.view==="pantalla")beep()}
 }
 function syncDemo(){
-  S.mentors=db.mentors;S.grid=db.grid;S.breaks=db.breaks||[];S.mesaNames=db.cfg.mesaNames||{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio",5:"Mesa adicional"};S.bookings=db.bookings;S.dur=db.cfg.dur;S.gap=db.cfg.gap;S.calendar=!!db.cfg.calendar;S.allowOtherDays=db.cfg.allowOtherDays;S.mtDur=db.cfg.mtDur;
+  S.mentors=db.mentors;S.grid=db.grid;S.breaks=db.breaks||[];S.mesaNames=db.cfg.mesaNames||{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio"};S.bookings=db.bookings;S.dur=db.cfg.dur;S.gap=db.cfg.gap;S.calendar=!!db.cfg.calendar;S.allowOtherDays=db.cfg.allowOtherDays;S.mtDur=db.cfg.mtDur;
   S.fechas=db.cfg.fechas;applyDayLabels();S.ensayo=db.cfg.ensayo;S.ubicacion=db.cfg.ubicacion;uid=db.seq;adoptCall(db.cfg.lastCall);firstLoad=false;
 }
 function applyState(pub){
-  S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio",5:"Mesa adicional"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
+  S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
   S.dur=pub.cfg.dur;S.gap=pub.cfg.gap>=0?pub.cfg.gap:10;S.calendar=!!pub.cfg.calendar;S.allowOtherDays=pub.cfg.allowOtherDays;S.mtDur=pub.cfg.mtDur;S.fechas=pub.cfg.fechas||["","",""];applyDayLabels();S.ensayo=pub.cfg.ensayo||"";S.ubicacion=pub.cfg.ubicacion||S.ubicacion;
   S.lastCall=pub.cfg.lastCall||null;S.day=pub.now.day;S.label=pub.now.label||"";S.today=pub.now.today||"";
   SRV.sec=pub.now.sec;SRV.at=performance.now();SRV.frozen=!!pub.now.frozen;S.sec=santiagoSec();
