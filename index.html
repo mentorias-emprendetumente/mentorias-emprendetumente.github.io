@@ -2357,7 +2357,7 @@ function renderTablet(){
         <h2>¡Listo, ${esc(T.first.trim())}!</h2>
         <p class="mesabig">${MN(B.mesa)}</p>${B.tema?`<p class="big">Categoría: <b>${esc(B.tema)}</b></p>`:""}<p class="big">Te esperamos en <b>${MN(B.mesa)}</b> ${T.day!==S.day?"el <b>"+DAYS[T.day]+"</b> ":""}a las <b>${fmt(B.start)} hrs</b> con <b>${esc(B.mentor||"")}</b>${B.spec?" ("+esc(B.spec)+")":""}.</p>
         <p class="big">Te llamaremos como <b>${esc(who)}</b> en la pantalla del stand.</p>
-        <div class="warnbox">${inv?"Te enviamos la invitación de Google Calendar a tu correo: acéptala y la cita queda en tu calendario. <b>No necesitas escanear el QR.</b>":"Escanea el QR para guardar la cita en tu calendario, con avisos <b>15 y 5 minutos antes</b>."} Si no llegas, serás llamado 3 veces y luego el cupo se libera.</div>
+        <div class="warnbox">${inv?"La invitación de Google Calendar te llegó a tu correo.":"Escanea el QR para guardar la cita en tu calendario, con avisos <b>15 y 5 minutos antes</b>."} Si no llegas, serás llamado 3 veces y luego el cupo se libera.</div>
         <div class="btns" style="margin-top:16px"><button type="button" class="btn primary" id="finish">${inv?"Listo · Salir":"Ya lo escaneé · Salir"}</button></div>
         <p class="countdown" id="cd">Si nadie toca la pantalla, vuelve al inicio en ${T.count} s</p>
       </div>
