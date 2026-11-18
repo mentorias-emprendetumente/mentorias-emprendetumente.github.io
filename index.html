@@ -323,11 +323,16 @@ var MentoriasCore = (function () {
 
   function defNames() { var o = {}; MESAS.forEach(function (n) { o[n] = "Mesa " + n; }); return o; }
   var PUBLIC = { book: true };
+  var MENTOR_OWN = { call: true, presente: true, start: true, finish: true, noShow: true, cancel: true };
 
   function run(db, ctx, action, payload, pin) {
     var R = make(db, ctx);
     if (!R.A.hasOwnProperty(action)) return { ok: false, msg: "Acción no válida." };
-    if (!PUBLIC[action] && String(pin || "") !== String(db.cfg.pin)) return { ok: false, msg: "PIN incorrecto.", auth: false };
+    if (!PUBLIC[action] && String(pin || "") !== String(db.cfg.pin)) {
+      /* Agenda de Control: el mentor opera solo sobre sus propias reservas, sin PIN */
+      var pl = payload || {}, own = MENTOR_OWN[action] && pl.asMid && db.bookings.filter(function (x) { return x.id === +pl.id && x.mid === +pl.asMid; })[0];
+      if (!own) return { ok: false, msg: "PIN incorrecto.", auth: false };
+    }
     try { return R.A[action](payload || {}); } catch (e) { return { ok: false, msg: "Error: " + (e && e.message ? e.message : e) }; }
   }
 
@@ -1873,6 +1878,17 @@ main{padding:16px 16px 40px}
 .pg{display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start}
 .pg-card{border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px}
 .pg-card h3{font-family:var(--display);font-size:20px;color:var(--navy)}
+.pg-card.acc{padding:0;gap:0;overflow:hidden}
+.pg-card.acc>summary{list-style:none;cursor:pointer;padding:14px 16px;font-family:var(--display);font-size:20px;color:var(--navy);display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:52px;font-weight:700}
+.pg-card.acc>summary::-webkit-details-marker{display:none}
+.pg-card.acc>summary::after{content:"+";font-size:26px;line-height:1;color:var(--red,#c8281e);font-weight:700}
+.pg-card.acc[open]>summary::after{content:"–"}
+.pg-card.acc[open]>summary{border-bottom:1px solid var(--line);background:#f4f6fb}
+.pg-card.acc>*:not(summary){margin:0 16px}
+.pg-card.acc>summary+*{margin-top:12px}
+.pg-card.acc>*:last-child{margin-bottom:16px}
+.pg-card.acc>*:not(summary)+*{margin-top:10px}
+
 .mrow{display:grid;grid-template-columns:1fr 1fr 30px;gap:6px}
 .pg input,.pg select{border:1px solid var(--line);border-radius:7px;padding:7px;font-size:14px;width:100%;background:#fff;min-width:0}
 .del{border:1px solid var(--line);background:#fff;border-radius:7px;color:var(--red);font-weight:700}
@@ -2474,7 +2490,6 @@ function pRows(mid,day){
   return rows.sort((a,b)=>a.t-b.t)}
 function renderPanel(){
   if(!S.mentors.length){document.getElementById("panelBody").innerHTML=`<p class="note">Cargando…</p>`;return}
-  if(LIVE&&!S.pinValue){renderPanelPin();return}
   const mid=S.pm,m=mentorById(mid),day=pmDay(),today=day===S.day;
   document.getElementById("pnTitle").textContent=m.name;
   document.getElementById("pnSub").textContent=(m.spec?m.spec+" · ":"")+(m.tema||"")+(S.label?" · "+S.label:"");
@@ -2499,7 +2514,7 @@ function renderPanel(){
     const k=r.k;
     const t=`<div class="t">${fmt(r.t)}<small>hasta ${fmt(r.t+r.d)}</small></div>`;
     if(k)return `<div class="ag-row${k.status==="enmesa"?" live":""}${past?" past":""}">${t}<div><b>${esc(k.name)}</b> · ${MN(k.mesa)}<br><span class="st ${k.status}">${STLAB[k.status]}</span>${k.rsvpNo&&WAITING(k)?` <span class="rsvp">⚠ No asistiré</span>`:""}${k.email?` <small>· con correo</small>`:""}</div>${past&&!WAITING(k)?"":pBtns(k,today,today&&topId!==k.id)}</div>`;
-    if(r.br)return `<div class="ag-row blk${past?" past":""}">${t}<div><b>${esc(r.br.label==="Bloqueado"?"Bloqueado":"☕ "+r.br.label)}</b><br><small>${r.br.label==="Bloqueado"?"No se puede reservar":"Pausa de "+r.br.from+" a "+r.br.to}</small></div>${past?"":`<div class="acts"><button type="button" class="a-no" data-pa="unblock" data-id="${r.br.id}">${r.br.label==="Bloqueado"?"Desbloquear":"Quitar pausa"}</button></div>`}</div>`;
+    if(r.br)return `<div class="ag-row blk${past?" past":""}">${t}<div><b>${esc(r.br.label==="Bloqueado"?"Bloqueado":"☕ "+r.br.label)}</b><br><small>${r.br.label==="Bloqueado"?"No se puede reservar":"Pausa de "+r.br.from+" a "+r.br.to}</small></div></div>`;
     return `<div class="ag-row free${past?" past":""}">${t}<div><b>Libre</b><br><small>${past?"Ya pasó":"Se puede reservar"}</small></div></div>`}).join("")+`</div>`;
   h+=`<p class="note" style="margin-top:12px">Al presionar «Llamar», el nombre aparece en la pantalla de llamados con un aviso sonoro.</p>`;
   document.getElementById("panelBody").innerHTML=h}
@@ -2517,18 +2532,15 @@ function renderPanel(){
     if(S.pending)return;
     const pm=e.target.closest("[data-pm]");
     if(pm&&S.pAsk){const ask=S.pAsk;S.pAsk=null;if(pm.dataset.pm==="volver"){renderPanel();return}
-      const r=await act(ask.kind==="noshow"?"noShow":"cancel",{id:ask.id,mode:pm.dataset.pm});toast(r.msg);renderPanel();return}
+      const r=await act(ask.kind==="noshow"?"noShow":"cancel",{id:ask.id,mode:pm.dataset.pm,asMid:S.pm});toast(r.msg);renderPanel();return}
     const a=e.target.closest("[data-pa]");if(!a)return;
     const id=+a.dataset.id,kind=a.dataset.pa;
     if(kind==="noshow"||kind==="cancel"){S.pAsk={id,kind};renderPanel();return}
     let r;
-    if(kind==="call")r=await act("call",{id});
-    else if(kind==="arrived")r=await act("presente",{id});
-    else if(kind==="start")r=await act("start",{id});
-    else if(kind==="finish")r=await act("finish",{id});
-    else if(kind==="block")r=await act("slotBlock",{mid:S.pm,day:pmDay(),start:+a.dataset.t});
-    else if(kind==="unblock")r=await act("breakDel",{id});
-    else if(kind==="pause"){const box=a.closest(".brkbox");r=await act("mentorPause",{mid:S.pm,mins:+box.querySelector("[data-pbm]").value,label:box.querySelector("[data-pbl]").value})}
+    if(kind==="call")r=await act("call",{id,asMid:S.pm});
+    else if(kind==="arrived")r=await act("presente",{id,asMid:S.pm});
+    else if(kind==="start")r=await act("start",{id,asMid:S.pm});
+    else if(kind==="finish")r=await act("finish",{id,asMid:S.pm});
     if(r&&!r.ok)toast(r.msg);else if(r&&r.msg&&kind!=="call")toast(r.msg);
     lastBanner=bannerOn();renderPanel()});
 })();
@@ -2686,6 +2698,8 @@ function renderPin(){
     <p class="note">${LIVE?"Pide el PIN del día al encargado del stand.":"PIN de la demo: <b>1234</b>. Se cambia en Parrilla → PIN de la anfitriona."}</p>
   </div>`;
 }
+document.addEventListener("toggle",e=>{const d=e.target;if(d&&d.dataset&&d.dataset.acc){S.accOpen=S.accOpen||{};S.accOpen[d.dataset.acc]=d.open}},true);
+const ACC=k=>(S.accOpen&&S.accOpen[k])?" open":"";
 function renderRecepcion(){
   document.getElementById("tabTitle").textContent={turnos:"Recepción del stand",parrilla:"Parrilla de mentores",plano:"Plano general de reservas",kpi:"Métricas del evento"}[S.hostTab];
   document.getElementById("tabSub").innerHTML=DAYS[S.day]+" · "+fmt(nowMin())+" hrs · 🔓 desbloqueado <button type=\"button\" class=\"lockbtn\" id=\"lockNow\">🔒 Bloquear</button>";
@@ -2728,25 +2742,25 @@ function renderRecepcion(){
   } else {
     if(S.memails===null&&S.pinValue)loadEmails();
     h+=`<div class="pg"><div style="display:grid;gap:14px">
-      <div class="pg-card"><h3>Ajustes</h3>
+      <details class="pg-card acc" data-acc="ajustes"${ACC("ajustes")}><summary>Ajustes</summary>
         <div class="setting"><span>Reservas para otros días</span><button type="button" class="switch" role="switch" id="swDays" aria-checked="${S.allowOtherDays}" aria-label="Permitir reservas para otros días"></button></div>
         ${MESAS.map(i=>`<div class="setting"><label for="mname${i}">Nombre de la mesa ${i}</label><input id="mname${i}" data-mname="${i}" maxlength="24" value="${esc(MNr(i))}" style="width:auto"></div>`).join("")}
         <div class="setting"><label for="durSel">Duración por defecto de los bloques nuevos</label><select id="durSel" style="width:auto;min-width:96px">${durOpts(S.dur)}</select></div>
         <div class="setting"><label for="gapSel">Intervalo entre reuniones</label><select id="gapSel" style="width:auto;min-width:96px">${[0,5,10,15,20,30].map(v=>`<option value="${v}"${v===+S.gap?" selected":""}>${v===0?"Sin intervalo":v+" min"}</option>`).join("")}</select></div>
         <div class="setting"><span>Invitaciones de Google Calendar</span><button type="button" class="switch" role="switch" id="swCal" aria-checked="${S.calendar}" aria-label="Enviar invitaciones de Google Calendar"></button></div>
         <p class="note">Con 20 min y ${+S.gap} min de intervalo, las reuniones son a las 14:00, 14:${String(20+ +S.gap).padStart(2,"0")}… (el intervalo solo se cambia sin reservas activas). Con Calendar encendido, cada reserva crea una cita en agenda.copec@gmail.com y la envía al mentor y, si dejó correo, a la persona. Mantenlo apagado mientras pruebas, para no enviar invitaciones reales a los mentores.</p>
-      </div>
-      <div class="pg-card"><h3>Fechas y lugar</h3>
+      </details>
+      <details class="pg-card acc" data-acc="fechas"${ACC("fechas")}><summary>Fechas, lugar y modo ensayo</summary>
         ${[0,1,2].map(i=>`<div class="setting"><label for="fecha${i}">${DAYS[i]}</label><input type="date" id="fecha${i}" data-fecha="${i}" value="${esc((S.fechas||[])[i]||"")}" style="width:auto"></div>`).join("")}
         <div class="setting"><label for="ensayoSel">Modo ensayo</label><select id="ensayoSel" style="width:auto"><option value=""${!S.ensayo?" selected":""}>Apagado</option>${[1,2,3].map(i=>`<option value="${i}"${S.ensayo==String(i)?" selected":""}>Simular Día ${i}</option>`).join("")}</select></div>
         <input id="ubicacionIn" value="${esc(S.ubicacion||"")}" placeholder="Ubicación del stand" aria-label="Ubicación del stand">
         <p class="note">El sistema usa estas fechas para saber qué día de la feria es. El modo ensayo sirve para probar antes del evento: apágalo el día de la feria.</p>
-      </div>
-      <div class="pg-card"><h3>Borrar todas las reservas</h3>
+      </details>
+      <details class="pg-card acc" data-acc="borrar"${ACC("borrar")}><summary>Borrar todas las reservas</summary>
         <p class="note">Elimina todas las reservas (de los 3 días) y deja las métricas en cero. Úsalo después de las pruebas, antes de la feria. No se puede deshacer.</p>
         <button type="button" class="add${S.sureClear?" sure":""}" id="clearAll" style="border-style:solid">${S.sureClear?"Toca otra vez para borrar TODO":"🗑 Borrar todas las reservas"}</button>
-      </div>
-      <div class="pg-card"><h3>PIN de la anfitriona</h3>
+      </details>
+      <details class="pg-card acc" data-acc="pin"${ACC("pin")}><summary>PIN</summary>
         <p class="note">Protege Recepción, Parrilla, Plano general y Métricas. Cámbialo al inicio de cada día.</p>
         <form id="pinForm" style="display:grid;gap:8px">
           <input id="pinNew" inputmode="numeric" maxlength="4" placeholder="Nuevo PIN (4 números)" autocomplete="off" aria-label="Nuevo PIN">
@@ -2754,11 +2768,11 @@ function renderRecepcion(){
           <button type="submit" class="add" style="border-style:solid">Guardar nuevo PIN</button>
           <span id="pinMsg" class="note" role="status">${S.pinMsg||"PIN actual: ••••"}</span>
         </form>
-      </div>
-      <div class="pg-card"><h3>Mentores del evento</h3><p class="note">Nombre, cargo y categoría de cada mentor. Los que no tienen bloques aún no reciben reservas: asígnales horario en la categoría correspondiente.</p>
+      </details>
+      <details class="pg-card acc" data-acc="mentores"${ACC("mentores")}><summary>Mentores del evento</summary><p class="note">Nombre, cargo y categoría de cada mentor. Los que no tienen bloques aún no reciben reservas: asígnales horario en la categoría correspondiente.</p>
         ${[...S.mentors].sort((a,b)=>TEMAS.indexOf(a.tema)-TEMAS.indexOf(b.tema)||a.name.localeCompare(b.name)).map(m=>`<div class="mrow"><input data-mm="${m.id}" data-f="name" value="${esc(m.name)}" aria-label="Nombre del mentor"><input data-mm="${m.id}" data-f="spec" value="${esc(m.spec)}" aria-label="Cargo" placeholder="Cargo"><button type="button" class="del" data-delm="${m.id}" aria-label="Quitar mentor">✕</button></div><div class="mrow" style="grid-template-columns:1fr 30px"><input data-mm="${m.id}" data-f="email" type="email" value="${esc((S.memails||{})[m.id]||"")}" aria-label="Correo corporativo de ${esc(m.name)}" placeholder="Correo corporativo (para su invitación de Calendar)"><a class="del" href="#panel-${m.id}" title="Abrir el panel de ${esc(m.name)}" aria-label="Abrir el panel de ${esc(m.name)}" style="text-decoration:none;text-align:center">↗</a></div><div class="mdays"><span class="dchip on" title="Reuniones posibles y reservadas en los días que participa">${(()=>{const x=mentorStats(m.id);return x.n+" reuniones · "+x.taken+" reservadas"})()}</span><select data-mm="${m.id}" data-f="tema" aria-label="Tema del mentor">${TEMAS.map(x=>`<option${x===m.tema?" selected":""}>${esc(x)}</option>`).join("")}</select>${[0,1,2].map(d=>{const bl=S.grid.filter(g=>g.mid===m.id&&g.day===d);return `<span class="dchip${bl.length?" on":""}" title="${bl.length?bl.map(b=>b.from+"–"+b.to).join(", "):"Sin bloques"}">${DAYS[d]}${bl.length?" · "+bl.map(b=>"M"+b.mesa+" "+b.from+"–"+b.to).join(", "):""}</span>`}).join("")}</div>`).join("")}
-      </div>
-      <div class="pg-card"><h3>Agregar mentor nuevo</h3>
+      </details>
+      <details class="pg-card acc" data-acc="nuevo"${ACC("nuevo")}><summary>Agregar mentor nuevo</summary>
         <p class="note">Elige los días en que participa y su horario (por ejemplo 10:00–13:00 para la mañana). Si no eliges días, queda en la lista sin bloques.</p>
         <form id="newMForm" style="display:grid;gap:8px">
           <input id="nmName" placeholder="Nombre del mentor" value="${esc(S.nm.name)}" aria-label="Nombre del mentor nuevo" autocomplete="off">
@@ -2772,22 +2786,22 @@ function renderRecepcion(){
           <button type="submit" class="add" style="border-style:solid">+ Agregar mentor y sus bloques</button>
           ${S.nm.msg?`<p class="${S.nm.ok?"okmsg":"warn"}" role="status">${S.nm.msg}</p>`:""}
         </form>
-      </div></div><div style="display:grid;gap:14px">`;
+      </details></div><div style="display:grid;gap:14px">`;
     const R=CR(), inBq=(m,bq)=>blocksOfMentor(S.day,m.id).some(g=>toMin(g.from)<bq[2]&&toMin(g.to)>bq[1]);
     const cov=BLOQS.map(bq=>{const per=TEMAS.map(tm=>R.mentorsOf(tm).filter(m=>inBq(m,bq))),tot=per.reduce((a,l)=>a+l.length,0),cats=per.filter(l=>l.length).length;
       const est=tot===0?["Sin mentores","off"]:tot>=4?["Sobrecarga (+"+(tot-2)+")","hi"]:(tot>=2&&cats>=2)?["Cubierto","ok"]:["Frágil","lo"];return {bq,per,est}});
-    h+=`<div class="pg-card"><h3>Cobertura · ${DAYS[S.day]}</h3><div class="pl-wrap"><table class="kx cov"><thead><tr><th>Bloque</th>${TEMAS.map(t=>`<th>${esc(t)}</th>`).join("")}<th>Estado</th></tr></thead><tbody>${cov.map(c=>`<tr><td><b>${c.bq[0]}</b><br><small>${fmt(c.bq[1])}–${fmt(c.bq[2])}</small></td>${c.per.map(l=>`<td>${l.length?l.map(m=>esc(m.name)).join("<br>"):"—"}</td>`).join("")}<td><span class="est ${c.est[1]}">${c.est[0]}</span></td></tr>`).join("")}</tbody></table></div>
-      <p class="note">Cubierto: 2 o 3 mentores en el bloque · Frágil: 1 mentor o 1 sola categoría · Sobrecarga: 4 o más mentores en el bloque (criterio del plan de Copec). Hay 5 mesas disponibles, compartidas por todos los mentores.</p></div>`;
+    h+=`<details class="pg-card acc" data-acc="cobertura"${ACC("cobertura")}><summary>Cobertura · ${DAYS[S.day]}</summary><div class="pl-wrap"><table class="kx cov"><thead><tr><th>Bloque</th>${TEMAS.map(t=>`<th>${esc(t)}</th>`).join("")}<th>Estado</th></tr></thead><tbody>${cov.map(c=>`<tr><td><b>${c.bq[0]}</b><br><small>${fmt(c.bq[1])}–${fmt(c.bq[2])}</small></td>${c.per.map(l=>`<td>${l.length?l.map(m=>esc(m.name)).join("<br>"):"—"}</td>`).join("")}<td><span class="est ${c.est[1]}">${c.est[0]}</span></td></tr>`).join("")}</tbody></table></div>
+      <p class="note">Cubierto: 2 o 3 mentores en el bloque · Frágil: 1 mentor o 1 sola categoría · Sobrecarga: 4 o más mentores en el bloque (criterio del plan de Copec). Hay 5 mesas disponibles, compartidas por todos los mentores.</p></details>`;
     TEMAS.forEach((tm,ti)=>{
       const ms=S.mentors.filter(m=>m.tema===tm).sort((a,b)=>a.name.localeCompare(b.name));
       const rows=ms.flatMap(m=>blocksOfMentor(S.day,m.id)).sort((a,b)=>toMin(a.from)-toMin(b.from)||mentorById(a.mid).name.localeCompare(mentorById(b.mid).name));
-      h+=`<div class="pg-card"><h3>${esc(tm)} · ${DAYS[S.day]}</h3>`;
+      h+=`<details class="pg-card acc" data-acc="tema${ti}"${ACC("tema"+ti)}><summary>${esc(tm)} · ${DAYS[S.day]}</summary>`;
       if(rows.length)h+=`<div class="brow"><span class="lab">Mentor</span><span class="lab">Desde</span><span class="lab">Hasta</span><span class="lab">Cada reunión</span><span></span></div>`;
       h+=rows.map(b=>{const x=blockStats(b);const m=mentorById(b.mid);
         return `<div class="brow"><select data-g="${b.id}" data-f="mid" aria-label="Mentor">${ms.map(o=>`<option value="${o.id}"${o.id===b.mid?" selected":""}>${esc(o.name)}</option>`).join("")}</select><select data-g="${b.id}" data-f="from" aria-label="Desde">${timeOpts(b.from)}</select><select data-g="${b.id}" data-f="to" aria-label="Hasta">${timeOpts(b.to)}</select><select data-g="${b.id}" data-f="dur" aria-label="Duración de cada reunión">${durOpts(durB(b))}</select><button type="button" class="del" data-delg="${b.id}" aria-label="Quitar bloque">✕</button></div><div class="bcount"><b>${x.n}</b> reuniones de ${x.d} min para ${esc(m.name)}${m.spec?" ("+esc(m.spec)+")":""} · <b>${x.taken}</b> reservadas · ${x.free?`<b>${x.free}</b> libres`:`<span class="full">completo</span>`}</div>`}).join("");
       if(!rows.length)h+=`<p class="note">Ningún mentor de esta categoría atiende este día.</p>`;
       h+=ms.length?`<div class="brow" style="grid-template-columns:1fr auto;margin-top:6px"><select id="addgM${ti}" aria-label="Mentor a agregar">${ms.map(o=>`<option value="${o.id}">${esc(o.name)}</option>`).join("")}</select><button type="button" class="add" data-addg="${ti}" style="margin:0">+ Agregar bloque</button></div>`:`<p class="note">Aún no hay mentores en esta categoría. Agrégalos abajo en «Agregar mentor nuevo».</p>`;
-      h+=`</div>`;
+      h+=`</details>`;
     });
     const withB=S.mentors.filter(m=>blocksOfMentor(S.day,m.id).length).sort((a,b)=>a.name.localeCompare(b.name));
     const brks=(S.breaks||[]).filter(x=>x.day===S.day&&x.mid).sort((a,b)=>toMin(a.from)-toMin(b.from));
