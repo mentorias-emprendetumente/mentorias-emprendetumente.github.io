@@ -61,24 +61,37 @@ var MentoriasCore = (function () {
     function waiting(k) { return k.status === "reservado" || k.status === "presente"; }
     function mentorBusy(day, mid, t, d, except) { return db.bookings.some(function (k) { return k !== except && k.day === day && k.mid === mid && occupies(k) && overlap(k.start, k.start + dk(k), t, t + d); }); }
     function mesaBusy(day, mesa, t, d, except) { return db.bookings.some(function (k) { return k !== except && k.day === day && k.mesa === mesa && occupies(k) && overlap(k.start, k.start + dk(k), t, t + d); }); }
+    /* mesa fija de cada mentor: la de su categoría (mesa 1..4); si dos mentores de la misma categoría coinciden, el segundo usa otra libre. Se mantiene el mismo lugar durante el día. */
+    function mesaPlan(day) {
+      var bl = db.grid.filter(function (g) { return g.day === day; }).sort(function (a, b) { return toMin(a.from) - toMin(b.from) || a.mid - b.mid; });
+      var by = {}, mine = {};
+      bl.forEach(function (g) {
+        var used = {};
+        bl.forEach(function (o) { if (by[o.id] && o !== g && overlap(toMin(g.from), toMin(g.to), toMin(o.from), toMin(o.to))) used[by[o.id]] = 1; });
+        var m = mentorById(g.mid), pref = [mine[g.mid], m ? TEMAS.indexOf(m.tema) + 1 : 0, 5].concat(MESAS);
+        var pick = 0; for (var i = 0; i < pref.length; i++) { if (pref[i] >= 1 && !used[pref[i]]) { pick = pref[i]; break; } }
+        by[g.id] = pick || 1; if (!mine[g.mid]) mine[g.mid] = by[g.id];
+      });
+      return by;
+    }
     function freeMesa(day, t, d) { for (var i = 0; i < MESAS.length; i++) { var m = MESAS[i]; if (!mesaBusy(day, m, t, d) && !breakOver(day, m, t, d)) return m; } return 0; }
     function bookable(day, t, d) { if (day > ctx.day) return true; if (day < ctx.day) return false; return (t + d) * 60 - ctx.sec >= GRACE * 60; }
     function loadOf(day, mid) { return db.bookings.filter(function (k) { return k.day === day && k.mid === mid && active(k); }).length; }
     /* horarios reservables de una categoría un día: [{ start, dur, total, mids:[libres], mesa(libre o 0) }] */
     function slotsFor(day, tema) {
-      var map = {};
+      var map = {}, plan = mesaPlan(day);
       mentorsOf(tema).forEach(function (m) {
         blocksOfMentor(day, m.id).forEach(function (g) {
-          var d = durB(g);
+          var d = durB(g), mesa = plan[g.id] || 1;
           slotsOf(g).forEach(function (t) {
             if (!bookable(day, t, d)) return;
-            var e = map[t] || (map[t] = { start: t, dur: d, total: 0, mids: [], mesa: 0 });
+            var e = map[t] || (map[t] = { start: t, dur: d, total: 0, mids: [], mesa: 0, mm: {} });
             e.total++;
-            if (!mentorBusy(day, m.id, t, d) && !breakOverM(day, m.id, t, d)) e.mids.push(m.id);
+            if (!mentorBusy(day, m.id, t, d) && !breakOverM(day, m.id, t, d) && !mesaBusy(day, mesa, t, d) && !breakOver(day, mesa, t, d)) { e.mids.push(m.id); e.mm[m.id] = mesa; e.mesa = mesa; }
           });
         });
       });
-      return Object.keys(map).map(function (k) { var e = map[k]; e.mesa = freeMesa(day, e.start, e.dur); return e; }).sort(function (a, b) { return a.start - b.start; });
+      return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return a.start - b.start; });
     }
     function bookingAtMesa(day, mesa, t) { return db.bookings.filter(function (k) { return k.day === day && k.mesa === mesa && occupies(k) && t >= k.start && t < k.start + dk(k); })[0] || null; }
     function activeSession(day, mesa) { return db.bookings.filter(function (k) { return k.day === day && k.mesa === mesa && k.status === "enmesa"; })[0] || null; }
@@ -129,7 +142,7 @@ var MentoriasCore = (function () {
         if (!e.mids.length) return fail("Ese horario se acaba de llenar. Elige otro.");
         if (!e.mesa) return fail("Todas las mesas están ocupadas a esa hora. Elige otro horario.");
         var mid = e.mids.slice().sort(function (a, b) { return loadOf(day, a) - loadOf(day, b) || a - b; })[0];
-        var k = { id: nextId(), day: day, mesa: e.mesa, mid: mid, dur: e.dur, start: start, name: cap(first) + " " + ini.toUpperCase() + ".", email: email,
+        var k = { id: nextId(), day: day, mesa: e.mm[mid] || e.mesa, mid: mid, dur: e.dur, start: start, name: cap(first) + " " + ini.toUpperCase() + ".", email: email,
           status: "reservado", calls: 0, startedAt: null, endsAt: null, endedAt: null, source: "tablet", advance: day > ctx.day,
           reminded: false, tk: token(), created: ctx.nowMs };
         db.bookings.push(k);
@@ -318,10 +331,10 @@ var MentoriasCore = (function () {
         return ok({ added: added.length }, added.length ? name + " agregado: " + added.join(", ") + " de " + p.from + " a " + p.to + "." : name + " quedó en la lista de mentores, sin bloques.");
       }
     };
-    return { A: A, mentorById: mentorById, slotsOf: slotsOf, slotsFor: slotsFor, blocksOfMentor: blocksOfMentor, mentorsOf: mentorsOf, mentorsNow: mentorsNow, dk: dk, durB: durB, waiting: waiting, occupies: occupies, mn: mn, breakNow: breakNow, breakOver: breakOver, breakOverM: breakOverM, mesaBusy: mesaBusy, gap: gapC, bookingAtMesa: bookingAtMesa, activeSession: activeSession, secsLeft: secsLeft, loadOf: loadOf };
+    return { A: A, mesaPlan: mesaPlan, mentorById: mentorById, slotsOf: slotsOf, slotsFor: slotsFor, blocksOfMentor: blocksOfMentor, mentorsOf: mentorsOf, mentorsNow: mentorsNow, dk: dk, durB: durB, waiting: waiting, occupies: occupies, mn: mn, breakNow: breakNow, breakOver: breakOver, breakOverM: breakOverM, mesaBusy: mesaBusy, gap: gapC, bookingAtMesa: bookingAtMesa, activeSession: activeSession, secsLeft: secsLeft, loadOf: loadOf };
   }
 
-  function defNames() { var o = {}; MESAS.forEach(function (n) { o[n] = "Mesa " + n; }); return o; }
+  function defNames() { var o = {}; MESAS.forEach(function (n) { o[n] = TEMAS[n - 1] || "Mesa adicional"; }); return o; }
   var PUBLIC = { book: true };
   var MENTOR_OWN = { call: true, presente: true, start: true, finish: true, noShow: true, cancel: true };
 
@@ -2224,7 +2237,7 @@ function demoSeeds(){
 if(LIVE){S.mentors=[];S.grid=[];S.bookings=[]}else S.bookings=demoSeeds();
 
 /* ---------- datos: en demo se guardan en esta página; en modo real, en Google Sheets ---------- */
-const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,gap:10,calendar:false,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
+const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,gap:10,calendar:false,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio",5:"Mesa adicional"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
 let lastCallSeen=null,firstLoad=true;
 function adoptCall(lc,serverNow){
   const key=lc?lc.at+"-"+lc.id+"-"+lc.calls:null;
@@ -2234,11 +2247,11 @@ function adoptCall(lc,serverNow){
   if(fresh){S.banner={name:lc.name,mesa:lc.mesa,mentor:lc.mentor||"",calls:lc.calls,until:Date.now()+12000};if(!LIVE||S.view==="pantalla")beep()}
 }
 function syncDemo(){
-  S.mentors=db.mentors;S.grid=db.grid;S.breaks=db.breaks||[];S.mesaNames=db.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5"};S.bookings=db.bookings;S.dur=db.cfg.dur;S.gap=db.cfg.gap;S.calendar=!!db.cfg.calendar;S.allowOtherDays=db.cfg.allowOtherDays;S.mtDur=db.cfg.mtDur;
+  S.mentors=db.mentors;S.grid=db.grid;S.breaks=db.breaks||[];S.mesaNames=db.cfg.mesaNames||{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio",5:"Mesa adicional"};S.bookings=db.bookings;S.dur=db.cfg.dur;S.gap=db.cfg.gap;S.calendar=!!db.cfg.calendar;S.allowOtherDays=db.cfg.allowOtherDays;S.mtDur=db.cfg.mtDur;
   S.fechas=db.cfg.fechas;applyDayLabels();S.ensayo=db.cfg.ensayo;S.ubicacion=db.cfg.ubicacion;uid=db.seq;adoptCall(db.cfg.lastCall);firstLoad=false;
 }
 function applyState(pub){
-  S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
+  S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Vinculación con el Medio",5:"Mesa adicional"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
   S.dur=pub.cfg.dur;S.gap=pub.cfg.gap>=0?pub.cfg.gap:10;S.calendar=!!pub.cfg.calendar;S.allowOtherDays=pub.cfg.allowOtherDays;S.mtDur=pub.cfg.mtDur;S.fechas=pub.cfg.fechas||["","",""];applyDayLabels();S.ensayo=pub.cfg.ensayo||"";S.ubicacion=pub.cfg.ubicacion||S.ubicacion;
   S.lastCall=pub.cfg.lastCall||null;S.day=pub.now.day;S.label=pub.now.label||"";S.today=pub.now.today||"";
   SRV.sec=pub.now.sec;SRV.at=performance.now();SRV.frozen=!!pub.now.frozen;S.sec=santiagoSec();
@@ -2309,7 +2322,7 @@ const bannerOn=()=>!!(S.banner&&S.banner.until>Date.now());
 /* correos de los mentores: no viajan en la vista pública, se piden con el PIN */
 async function loadEmails(){if(!S.pinValue||S.emBusy)return;S.emBusy=true;try{const r=await act("prodInfo",{});if(r&&r.ok&&r.data&&r.data.emails){S.memails=r.data.emails;if(S.view==="tablet"&&S.hostTab==="parrilla"&&!busy())renderTablet()}}finally{S.emBusy=false}}
 /* mesas que se muestran: al menos 2, y todas hasta la más alta con actividad hoy */
-function mesasEnUso(){let n=2;for(const k of S.bookings)if(k.day===S.day&&ACTIVE(k)&&k.mesa>n)n=k.mesa;return MESAS.filter(x=>x<=Math.min(5,n))}
+function mesasEnUso(){const set=new Set();for(const k of S.bookings)if(k.day===S.day&&ACTIVE(k))set.add(k.mesa);try{const pl=CR().mesaPlan?CR().mesaPlan(S.day):null;if(pl)for(const g of S.grid)if(g.day===S.day&&pl[g.id])set.add(pl[g.id])}catch(e){}const l=MESAS.filter(x=>set.has(x));return l.length?l:MESAS.slice(0,2)}
 function mentorState(m){const day=S.day,n=S.sec/60;
   const act=S.bookings.find(k=>k.day===day&&k.mid===m.id&&k.status==="enmesa");if(act)return ["En mentoría con "+act.name,"on"];
   const br=(S.breaks||[]).find(x=>x.day===day&&x.mid===m.id&&n>=toMin(x.from)&&n<toMin(x.to));if(br)return ["☕ "+br.label+" hasta las "+br.to,"mid"];
@@ -2729,7 +2742,8 @@ function renderRecepcion(){
       const callBtn=today&&WAITING(b)&&(b.start*60-S.sec<=GRACE*60||(!activeSession(b.day,b.mesa)&&firstWaiting&&firstWaiting.id===b.id))?`<button type="button" class="a-no" data-ra="call" data-id="${b.id}">📣 Llamar</button>`:"";
       const canBtn=`<button type="button" class="a-no${S.sure===b.id?" sure":""}" data-ra="cancel" data-id="${b.id}">${S.sure===b.id?"Toca otra vez para cancelar":"Cancelar"}</button>`;
       if(b.status==="reservado")acts=`<div class="acts">${callBtn}${today?`<button type="button" class="a-ok" data-ra="presente" data-id="${b.id}">Llegó al stand</button>`:""}${canBtn}${delBtn(b)}</div>`;
-      else if(b.status==="presente")acts=`<div class="acts">${callBtn}${canBtn}${delBtn(b)}</div>`;
+      else if(b.status==="presente")acts=`<div class="acts">${callBtn}${today?`<button type="button" class="a-ok" data-ra="start" data-id="${b.id}">▶ Iniciar mentoría</button>`:""}${canBtn}${delBtn(b)}</div>`;
+      else if(b.status==="enmesa")acts=`<div class="acts"><button type="button" class="a-no" data-ra="finish" data-id="${b.id}">Terminar sesión</button></div>`;
       else if(b.status!=="enmesa")acts=`<div class="acts">${delBtn(b)}</div>`;
       return `<div class="card bk"><div class="t tnum">${fmt(b.start)}</div><div><div class="n">${esc(b.name)}</div><div class="m">${esc(DAYS[b.day])} · ${MN(b.mesa)} · ${esc(m?m.name:"")}${b.calls?" · "+b.calls+" llamado(s)":""}${b.email?" · con correo":""}</div><span class="st ${b.status}">${STLAB[b.status]}</span>${b.rsvpNo&&WAITING(b)?` <span class="rsvp">⚠ Respondió «No asistiré» en Calendar</span>`:""}${b.status==="enmesa"?`<span class="cdl tnum" data-end="${end}">${mmss(end-S.sec)}</span>`:""}${acts}</div></div>`};
     h+=rsvpBox(true).replace(/data-pa="cancel"/g,'data-ra="cancelnow"');
@@ -3026,6 +3040,8 @@ rb.addEventListener("click",e=>{
     if(a.dataset.ra==="del"){S.sure=null;if(S.sureDel===id){S.sureDel=null;staff("deleteBooking",{id},"Reserva borrada")}else{S.sureDel=id;renderRecepcion()}return}
     S.sureDel=null;
     if(a.dataset.ra==="presente"){S.sure=null;staff("presente",{id})}
+    if(a.dataset.ra==="start"){S.sure=null;staff("start",{id})}
+    if(a.dataset.ra==="finish"){S.sure=null;staff("finish",{id})}
     if(a.dataset.ra==="call"){S.sure=null;if(LIVE)beep();staff("call",{id}).then(()=>{lastBanner=bannerOn()})}
     if(a.dataset.ra==="cancelnow"){S.sure=null;staff("cancel",{id,mode:"liberar"});return}
     if(a.dataset.ra==="cancel"){if(S.sure===id){S.sure=null;staff("cancel",{id})}else{S.sure=id;renderRecepcion()}}
