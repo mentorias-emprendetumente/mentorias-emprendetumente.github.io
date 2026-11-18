@@ -203,40 +203,22 @@ var MentoriasCore = (function () {
         db.breaks = db.breaks.filter(function (x) { return x.id !== b.id; }); return ok(null, mn(+p.mesa) + " vuelve a atender.");
       },
       deleteBooking: function (p) { var i = -1; for (var j = 0; j < db.bookings.length; j++) if (db.bookings[j].id === +p.id) { i = j; break; } if (i < 0) return fail("Esa reserva ya no existe."); var k = db.bookings[i]; if (cfg.lastCall && cfg.lastCall.id === k.id) cfg.lastCall = null; db.bookings.splice(i, 1); return ok(); },
-      clearBookings: function () { db.bookings.length = 0; cfg.lastCall = null; return ok(); },
+      clearBookings: function () { db.bookings.length = 0; db.breaks = []; cfg.lastCall = null; return ok(); },
       cancel: function (p) {
         var k = find(p.id); if (!k || !waiting(k)) return fail("Esa reserva ya no se puede cancelar.");
         k.status = "cancelada"; k.rsvp = "";
-        if (p.mode === "bloquear") blockOf(k);
-        return ok(null, p.mode === "bloquear" ? "Cita cancelada. El horario quedó bloqueado." : "Cita cancelada. El horario quedó libre.");
+        return ok(null, "Cita cancelada. El horario quedó libre.");
       },
       /* el mentor marca que la persona no llegó: libera o bloquea ese horario */
       noShow: function (p) {
         var k = find(p.id); if (!k || !waiting(k)) return fail("Esa reserva ya no está esperando.");
         k.status = "liberado"; k.rsvp = "";
-        if (p.mode === "bloquear") blockOf(k);
-        return ok(null, p.mode === "bloquear" ? "Marcada como no llegó. El horario quedó bloqueado." : "Marcada como no llegó. El horario quedó libre.");
+        return ok(null, "Marcada como no llegó. El horario quedó libre.");
       },
       /* el mentor bloquea un horario libre de su agenda */
-      slotBlock: function (p) {
-        var mid = +p.mid, day = +p.day, t = +p.start, m = mentorById(mid); if (!m) return fail("Mentor no válido.");
-        if (!(day >= 0 && day < DAYS)) return fail("Día no válido.");
-        var g = blocksOfMentor(day, mid).filter(function (b) { return slotsOf(b).indexOf(t) >= 0; })[0]; if (!g) return fail("Ese horario no existe en tu agenda.");
-        var d = durB(g);
-        if (mentorBusy(day, mid, t, d)) return fail("Ese horario ya tiene una reserva. Cancélala primero.");
-        if (breakOverM(day, mid, t, d)) return fail("Ese horario ya está bloqueado.");
-        db.breaks = db.breaks || []; db.breaks.push({ id: nextId(), day: day, mesa: 0, mid: mid, from: fmt(t), to: fmt(t + d), label: "Bloqueado" });
-        return ok(null, "Horario bloqueado.");
-      },
+      slotBlock: function () { return fail("Bloquear horarios no está disponible."); },
       /* pausa del mentor desde ahora (almuerzo, baño, llamada…) */
-      mentorPause: function (p) {
-        var mid = +p.mid, mins = +p.mins; if (!mentorById(mid)) return fail("Mentor no válido.");
-        if (!(mins >= 5 && mins <= 120 && mins % 5 === 0)) return fail("Duración de pausa no válida.");
-        var f = Math.floor(ctx.sec / 60), t = Math.min(CLOSE, f + mins);
-        if (db.bookings.some(function (k) { return k.day === ctx.day && k.mid === mid && k.status === "enmesa"; })) return fail("Tienes una mentoría en curso. Termínala antes de pausar.");
-        if (breakOverM(ctx.day, mid, f, 1)) return fail("Ya estás en una pausa.");
-        return A.breakAdd({ day: ctx.day, mid: mid, from: fmt(f), to: fmt(t), label: p.label || "Descanso" });
-      },
+      mentorPause: function () { return fail("Las pausas no están disponibles."); },
       /* Google Calendar: la persona respondió «No asistiré» (o volvió a aceptar) */
       setRsvp: function (p) { var k = find(p.id); if (!k) return fail("Esa reserva ya no existe."); k.rsvp = p.v === "no" ? "no" : ""; return ok(); },
 
@@ -2473,7 +2455,7 @@ function pBreakCtl(mid){const n=S.sec/60,b=(S.breaks||[]).find(x=>x.day===S.day&
   return b?`<div class="brkbox on">☕ <b>${esc(b.label)}</b> hasta las <b>${b.to}</b> · quedan <b class="tnum" data-end="${toMin(b.to)*60}">${mmss(toMin(b.to)*60-S.sec)}</b></div>`:""}
 function pBtns(k,today,allowAsk){
   if(S.pAsk&&S.pAsk.id===k.id&&allowAsk===false)return "";
-  if(S.pAsk&&S.pAsk.id===k.id)return `<div class="ask"><span><b>${S.pAsk.kind==="noshow"?"No llegó":"Cancelar cita"}:</b> ¿qué hago con este horario?</span><button type="button" class="a-ok" data-pm="liberar">Liberar horario</button><button type="button" class="a-no" data-pm="bloquear">Bloquear horario</button><button type="button" class="a-no" data-pm="volver">Volver</button></div>`;
+  if(S.pAsk&&S.pAsk.id===k.id)return `<div class="ask"><span><b>${S.pAsk.kind==="noshow"?"No llegó":"Cancelar cita"}:</b> ¿qué hago con este horario?</span><button type="button" class="a-ok" data-pm="liberar">Liberar horario</button><button type="button" class="a-no" data-pm="volver">Volver</button></div>`;
   let b="";
   if(today&&WAITING(k)){
     b+=`<button type="button" class="a-no" data-pa="call" data-id="${k.id}">📣 Llamar</button>`;
@@ -2518,8 +2500,8 @@ function renderPanel(){
     const t=`<div class="t">${fmt(r.t)}<small>hasta ${fmt(r.t+r.d)}</small></div>`;
     if(k)return `<div class="ag-row${k.status==="enmesa"?" live":""}${past?" past":""}">${t}<div><b>${esc(k.name)}</b> · ${MN(k.mesa)}<br><span class="st ${k.status}">${STLAB[k.status]}</span>${k.rsvpNo&&WAITING(k)?` <span class="rsvp">⚠ No asistiré</span>`:""}${k.email?` <small>· con correo</small>`:""}</div>${past&&!WAITING(k)?"":pBtns(k,today,today&&topId!==k.id)}</div>`;
     if(r.br)return `<div class="ag-row blk${past?" past":""}">${t}<div><b>${esc(r.br.label==="Bloqueado"?"Bloqueado":"☕ "+r.br.label)}</b><br><small>${r.br.label==="Bloqueado"?"No se puede reservar":"Pausa de "+r.br.from+" a "+r.br.to}</small></div>${past?"":`<div class="acts"><button type="button" class="a-no" data-pa="unblock" data-id="${r.br.id}">${r.br.label==="Bloqueado"?"Desbloquear":"Quitar pausa"}</button></div>`}</div>`;
-    return `<div class="ag-row free${past?" past":""}">${t}<div><b>Libre</b><br><small>${past?"Ya pasó":"Se puede reservar"}</small></div>${past?"":`<div class="acts"><button type="button" class="a-no" data-pa="block" data-t="${r.t}">Bloquear horario</button></div>`}</div>`}).join("")+`</div>`;
-  h+=`<p class="note" style="margin-top:12px">Al presionar «Llamar», el nombre aparece en la pantalla de llamados con un aviso sonoro. «Bloquear horario» deja un espacio ocupado (llamada, mensajes, pausa) para que nadie pueda reservarlo.</p>`;
+    return `<div class="ag-row free${past?" past":""}">${t}<div><b>Libre</b><br><small>${past?"Ya pasó":"Se puede reservar"}</small></div></div>`}).join("")+`</div>`;
+  h+=`<p class="note" style="margin-top:12px">Al presionar «Llamar», el nombre aparece en la pantalla de llamados con un aviso sonoro.</p>`;
   document.getElementById("panelBody").innerHTML=h}
 (function(){
   const pnb=document.getElementById("panelBody");
