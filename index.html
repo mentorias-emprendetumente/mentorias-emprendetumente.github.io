@@ -2574,7 +2574,7 @@ function renderTV(){
     if(!nexts.length)h+=`<div class="nrow"><span class="t">—</span><span class="n" style="color:#9fb2d4">Sin reservas próximas</span><span></span></div>`;
     for(const n of nexts){
       const soon=n.start*60-S.sec<=GRACE*60||n.calls>0;const nm=mentorOf(n);
-      h+=`<div class="nrow${soon?" soon":""}"><span class="t">${fmt(n.start)}</span><span class="n">${esc(n.name)}<br><span class="m">con ${esc(nm?nm.name:"")}</span></span>${soon?`<span class="soonpill">${n.calls?"TE LLAMAN":"ACÉRCATE"}</span>`:"<span></span>"}</div>`;
+      h+=`<div class="nrow${soon?" soon":""}"><span class="t">${fmt(n.start)}</span><span class="n">${esc(n.name)}<br><span class="m">con ${esc(nm?nm.name:"")}</span></span>${soon?`<span class="soonpill">${n.status==="presente"?"YA ESTÁ AQUÍ":n.calls?"TE LLAMAN":"ACÉRCATE"}</span>`:"<span></span>"}</div>`;
     }
     h+=`</div></div>`;
   }
