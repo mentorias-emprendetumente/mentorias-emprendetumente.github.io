@@ -2346,27 +2346,27 @@ function renderTablet(){
         <div class="field"><label for="fFirst">Tu nombre</label><input type="text" id="fFirst" autocomplete="off" maxlength="20" value="${esc(T.first)}" placeholder="Camila"></div>
         <div class="field"><label for="fIni">Inicial apellido</label><input type="text" id="fIni" autocomplete="off" maxlength="1" value="${esc(T.ini)}" placeholder="R"></div>
       </div>
-      <div class="field"><label for="fMail">Correo <span class="opt">(opcional · no es necesario, el QR ya te avisa)</span></label><input type="email" id="fMail" autocomplete="off" value="${esc(T.email)}" placeholder="nombre@correo.cl"></div>
+      <div class="field"><label for="fMail">Correo <span class="opt">(opcional · si lo dejas, te enviamos la cita a tu Calendar y no necesitas el QR)</span></label><input type="email" id="fMail" autocomplete="off" value="${esc(T.email)}" placeholder="nombre@correo.cl"></div>
       <label class="consent" for="fOk"><input type="checkbox" id="fOk" ${T.ok?"checked":""}><span>Acepto que mi nombre aparezca en la pantalla del stand y que mis datos se usen solo para esta mentoría. Se eliminan al terminar la feria.</span></label>
       <div class="btns"><button type="button" class="btn ghost" id="back">← Cambiar horario</button><button type="submit" class="btn primary" id="confirm">Confirmar reserva</button></div>
     </form>`;
   } else {
-    const B=S.booked||{},who=T.first.trim()+" "+T.ini.trim().toUpperCase()+".";
+    const B=S.booked||{},who=T.first.trim()+" "+T.ini.trim().toUpperCase()+".",inv=!!(T.email&&S.calendar);
     h+=`<div class="done">
       <div>
         <h2>¡Listo, ${esc(T.first.trim())}!</h2>
         <p class="mesabig">${MN(B.mesa)}</p>${B.tema?`<p class="big">Categoría: <b>${esc(B.tema)}</b></p>`:""}<p class="big">Te esperamos en <b>${MN(B.mesa)}</b> ${T.day!==S.day?"el <b>"+DAYS[T.day]+"</b> ":""}a las <b>${fmt(B.start)} hrs</b> con <b>${esc(B.mentor||"")}</b>${B.spec?" ("+esc(B.spec)+")":""}.</p>
         <p class="big">Te llamaremos como <b>${esc(who)}</b> en la pantalla del stand.</p>
-        <div class="warnbox">Escanea el QR para guardar la cita en tu calendario, con avisos <b>15 y 5 minutos antes</b>. Si no llegas, el mentor te llamará 3 veces y luego el cupo se libera.</div>
-        <div class="btns" style="margin-top:16px"><button type="button" class="btn primary" id="finish">Ya lo escaneé · Salir</button></div>
+        <div class="warnbox">${inv?"Te enviamos la invitación de Google Calendar a tu correo: acéptala y la cita queda en tu calendario. <b>No necesitas escanear el QR.</b>":"Escanea el QR para guardar la cita en tu calendario, con avisos <b>15 y 5 minutos antes</b>."} Si no llegas, serás llamado 3 veces y luego el cupo se libera.</div>
+        <div class="btns" style="margin-top:16px"><button type="button" class="btn primary" id="finish">${inv?"Listo · Salir":"Ya lo escaneé · Salir"}</button></div>
         <p class="countdown" id="cd">Si nadie toca la pantalla, vuelve al inicio en ${T.count} s</p>
       </div>
-      <div class="qrcard"><div id="qr" aria-label="Código QR para agregar la cita a tu calendario"></div><p>Escanéalo con la cámara</p><small>Agrega la cita (con la mesa y el mentor) a tu calendario, iPhone o Android, con avisos 15 y 5 min antes. No necesitas dar tu correo.</small></div>
+      ${inv?"":`<div class="qrcard"><div id="qr" aria-label="Código QR para agregar la cita a tu calendario"></div><p>Escanéalo con la cámara</p><small>Agrega la cita (con la mesa y el mentor) a tu calendario, iPhone o Android, con avisos 15 y 5 min antes. No necesitas dar tu correo.</small></div>`}
     </div>`;
   }
   el.innerHTML=h;
   if(T.step==="form")updateConfirm();
-  if(T.step==="done")drawQR();
+  if(T.step==="done"&&document.getElementById("qr"))drawQR();
 }
 function updateConfirm(){
   const T=S.tab,btn=document.getElementById("confirm");
