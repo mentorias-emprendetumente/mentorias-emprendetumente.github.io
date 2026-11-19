@@ -333,7 +333,16 @@ var MentoriasCore = (function () {
   var PUBLIC = { book: true };
   var MENTOR_OWN = { call: true, presente: true, start: true, finish: true, noShow: true, cancel: true };
 
+  /* Cuando termina la hora de una persona, su mentoría queda como realizada sin que nadie tenga que apretar nada.
+     Solo se salvan las que la anfitriona marcó como «no llegó» o canceló antes. */
+  function autoEnd(k, ctx) {
+    if (!(k.status === "reservado" || k.status === "presente" || k.status === "enmesa")) return null;
+    var d = k.dur || 20, fin = (k.start + d) * 60;
+    if (!(k.day < ctx.day || (k.day === ctx.day && fin <= ctx.sec))) return null;
+    return { status: "finalizada", startedAt: k.startedAt != null ? k.startedAt : k.start * 60, endedAt: k.endedAt != null ? k.endedAt : (k.status === "enmesa" && k.endsAt ? Math.min(k.endsAt, fin) : fin) };
+  }
   function run(db, ctx, action, payload, pin) {
+    db.bookings.forEach(function (k) { var a = autoEnd(k, ctx); if (a) { k.status = a.status; k.startedAt = a.startedAt; k.endedAt = a.endedAt; k.auto = true; } });
     var R = make(db, ctx);
     if (!R.A.hasOwnProperty(action)) return { ok: false, msg: "Acción no válida." };
     if (!PUBLIC[action] && String(pin || "") !== String(db.cfg.pin)) {
@@ -353,8 +362,9 @@ var MentoriasCore = (function () {
       grid: db.grid,
       breaks: db.breaks || [],
       bookings: db.bookings.map(function (k) {
-        return { id: k.id, day: k.day, mesa: k.mesa, mid: k.mid || 0, dur: k.dur || db.cfg.dur, start: k.start, name: k.name, hasEmail: !!k.email, status: k.status, calls: k.calls,
-          startedAt: k.startedAt, endsAt: k.endsAt, endedAt: k.endedAt, source: k.source, advance: !!k.advance, rsvpNo: k.rsvp === "no" };
+        var a = autoEnd(k, ctx) || {};
+        return { id: k.id, day: k.day, mesa: k.mesa, mid: k.mid || 0, dur: k.dur || db.cfg.dur, start: k.start, name: k.name, hasEmail: !!k.email, status: a.status || k.status, calls: k.calls,
+          startedAt: a.startedAt != null ? a.startedAt : k.startedAt, endsAt: k.endsAt, endedAt: a.endedAt != null ? a.endedAt : k.endedAt, source: k.source, advance: !!k.advance, rsvpNo: k.rsvp === "no" };
       })
     };
   }
@@ -2321,7 +2331,7 @@ async function loadEmails(){if(!S.pinValue||S.emBusy)return;S.emBusy=true;try{co
 function mesasEnUso(){return MESAS.slice()}
 /* pantalla de llamados: una tarjeta por MESA, solo las que tienen un mentor ahora (atendiendo, esperando a alguien, o en su horario). Las mesas no pertenecen a una categoría. */
 function panelesTv(){const day=S.day,n=S.sec/60,map={};
-  const nowBk=S.bookings.filter(k=>k.day===day&&ACTIVE(k)&&(k.status==="enmesa"||((k.status==="reservado"||k.status==="presente")&&k.start*60<=S.sec+300&&(k.start+bk(k))*60>S.sec)));
+  const nowBk=S.bookings.filter(k=>k.day===day&&ACTIVE(k)&&(k.status==="enmesa"||((k.status==="reservado"||k.status==="presente")&&k.start*60<=S.sec&&(k.start+bk(k))*60>S.sec)));
   nowBk.forEach(k=>{if(!k.mid)return;(map[k.mid]=map[k.mid]||{mid:k.mid,cur:[]}).cur.push(k)});
   S.mentors.forEach(m=>{if(!map[m.id]&&blocksOfMentor(day,m.id).some(g=>n>=toMin(g.from)&&n<toMin(g.to)))map[m.id]={mid:m.id,cur:[]}});
   if(!Object.keys(map).length){const fut=S.grid.filter(g=>g.day===day&&toMin(g.from)>n).sort((a,b)=>toMin(a.from)-toMin(b.from));
@@ -2578,9 +2588,8 @@ function renderTV(){
   const Rtv=CR(),nowM=nowMin(),freeNow=Rtv.mentorsNow().length>0;
   const pTv=panelesTv(),nT=pTv.length;
   const fila=(k)=>{const m=mentorOf(k);
-    if(k.status==="enmesa")return `<div class="now"><div><div class="lbl">EN MENTORÍA</div><div class="who">${esc(k.name)}</div><div class="meta">con ${esc(m?m.name:"")}</div></div><div class="cd"><b data-end="${k.endsAt}">${mmss(k.endsAt-S.sec)}</b><span>tiempo restante</span></div></div>`;
-    const end=(k.start+bk(k))*60;
-    return `<div class="now wait"><div><div class="lbl">${k.calls?"LLAMADO "+k.calls+" DE 3":"ES TU TURNO"}</div><div class="who">${esc(k.name)}</div><div class="meta">Acércate a ${esc(MN(k.mesa))} · con ${esc(m?m.name:"")}</div></div><div class="cd"><b data-end="${end}">${mmss(end-S.sec)}</b><span>tiempo disponible</span></div></div>`};
+    if(k.calls&&k.status!=="enmesa")return `<div class="now wait"><div><div class="lbl">LLAMADO ${k.calls} DE 3</div><div class="who">${esc(k.name)}</div><div class="meta">Acércate a ${esc(MN(k.mesa))} · con ${esc(m?m.name:"")}</div></div></div>`;
+    return `<div class="now"><div><div class="lbl">EN MENTORÍA</div><div class="who">${esc(k.name)}</div><div class="meta">con ${esc(m?m.name:"")}</div></div></div>`};
   h=h.replace(/<div class="tv-grid[^>]*>/,"");
   h+=`<div class="tv-grid${nT>2?" many":""}${nT>2?" g2":""}" style="grid-template-columns:repeat(${nT<=2?Math.max(1,nT):2},1fr)">`;
   if(!nT){
