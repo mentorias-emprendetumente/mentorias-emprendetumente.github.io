@@ -222,6 +222,12 @@ var MentoriasCore = (function () {
         k.status = "liberado"; k.rsvp = "";
         return ok(null, "Marcada como no llegó. El horario quedó libre.");
       },
+      /* corrección después de terminada la hora: la persona en realidad no llegó */
+      noShowLate: function (p) {
+        var k = find(p.id); if (!k || k.status !== "finalizada") return fail("Esa mentoría no está como realizada.");
+        k.status = "liberado"; k.rsvp = ""; k.auto = false;
+        return ok(null, "Corregida: quedó como «no llegó».");
+      },
       /* el mentor bloquea un horario libre de su agenda */
       slotBlock: function () { return fail("Bloquear horarios no está disponible."); },
       /* pausa del mentor desde ahora (almuerzo, baño, llamada…) */
@@ -2762,6 +2768,7 @@ function renderRecepcion(){
       if(b.status==="reservado")acts=`<div class="acts">${callBtn}${today?`<button type="button" class="a-ok" data-ra="presente" data-id="${b.id}">Llegó al stand</button>`:""}${canBtn}${delBtn(b)}</div>`;
       else if(b.status==="presente")acts=`<div class="acts">${callBtn}${today?`<button type="button" class="a-ok" data-ra="start" data-id="${b.id}">▶ Iniciar mentoría</button>`:""}${canBtn}${delBtn(b)}</div>`;
       else if(b.status==="enmesa")acts=`<div class="acts"><button type="button" class="a-no" data-ra="finish" data-id="${b.id}">Terminar sesión</button></div>`;
+      else if(b.status==="finalizada")acts=`<div class="acts"><button type="button" class="a-no${S.sureLate===b.id?" sure":""}" data-ra="late" data-id="${b.id}">${S.sureLate===b.id?"Toca otra vez: no llegó":"✖ En realidad no llegó"}</button>${delBtn(b)}</div>`;
       else if(b.status!=="enmesa")acts=`<div class="acts">${delBtn(b)}</div>`;
       return `<div class="card bk"><div class="t tnum">${fmt(b.start)}</div><div><div class="n">${esc(b.name)}</div><div class="m">${esc(DAYS[b.day])} · ${MN(b.mesa)} · ${esc(m?m.name:"")}${b.calls?" · "+b.calls+" llamado(s)":""}${b.email?" · con correo":""}</div><span class="st ${b.status}">${STLAB[b.status]}</span>${b.rsvpNo&&WAITING(b)?` <span class="rsvp">⚠ Respondió «No asistiré» en Calendar</span>`:""}${b.status==="enmesa"?`<span class="cdl tnum" data-end="${end}">${mmss(end-S.sec)}</span>`:""}${acts}</div></div>`};
     h+=rsvpBox(true).replace(/data-pa="cancel"/g,'data-ra="cancelnow"');
@@ -3055,6 +3062,7 @@ async function staff(action,payload,okMsg){if(S.pending)return null;const r=awai
 rb.addEventListener("click",e=>{
   const a=e.target.closest("[data-ra]");
   if(a){const id=+a.dataset.id;
+    if(a.dataset.ra==="late"){S.sure=null;S.sureDel=null;if(S.sureLate===id){S.sureLate=null;staff("noShowLate",{id},"Corregida: quedó como no llegó")}else{S.sureLate=id;renderRecepcion()}return}
     if(a.dataset.ra==="del"){S.sure=null;if(S.sureDel===id){S.sureDel=null;staff("deleteBooking",{id},"Reserva borrada")}else{S.sureDel=id;renderRecepcion()}return}
     S.sureDel=null;
     if(a.dataset.ra==="presente"){S.sure=null;staff("presente",{id})}
