@@ -2598,7 +2598,7 @@ function renderTV(){
     }
     h+=`</div></div>`;
   }
-  h+=`</div><div class="tv-foot"><span>¿Aún no reservas? <b>Hazlo gratis con la anfitriona del stand</b></span><span>Mentorías 1 a 1</span></div>`;
+  h+=`</div><div class="tv-foot"><span></span><span>Mentorías 1 a 1</span></div>`;
   if(LIVE&&!S.soundOn)h+=`<div class="soundgate" id="soundGate"><b>Toca la pantalla para activar el sonido</b><span>Solo una vez, al encender la pantalla</span></div>`;
   if(bannerOn())h+=`<div class="banner" role="alert"><div class="l">LLAMADO ${S.banner.calls} DE 3</div><div class="n">${esc(S.banner.name)}</div><div class="m">Acércate a ${MN(S.banner.mesa)}${S.banner.mentor?" · con "+esc(S.banner.mentor):""}</div><div class="c">Stand Copec · Mentorías</div></div>`;
   document.getElementById("tvScreen").innerHTML=h;
