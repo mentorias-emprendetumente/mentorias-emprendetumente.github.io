@@ -2328,7 +2328,9 @@ function panelesTv(){const day=S.day,n=S.sec/60,map={};
     if(fut.length){const f=toMin(fut[0].from);fut.filter(g=>toMin(g.from)===f).forEach(g=>{map[g.mid]={mid:g.mid,cur:[]}})}}
   let ps=Object.values(map).filter(p=>mentorById(p.mid));
   ps.forEach(p=>{p.cur.sort((a,b)=>(a.status==="enmesa"?0:1)-(b.status==="enmesa"?0:1)||a.start-b.start);p.nexts=S.bookings.filter(k=>k.day===day&&k.mid===p.mid&&WAITING(k)&&!p.cur.includes(k)&&(k.start+bk(k))*60>S.sec).sort((a,b)=>a.start-b.start)});
-  ps.sort((a,b)=>(b.cur.length>0)-(a.cur.length>0));ps=ps.slice(0,MESAS.length);
+  const dutyNow=p=>blocksOfMentor(day,p.mid).some(g=>n>=toMin(g.from)&&n<toMin(g.to));
+  ps=ps.filter(p=>dutyNow(p)||p.cur.some(k=>k.status!=="enmesa"||k.endsAt>S.sec));
+  ps.sort((a,b)=>(dutyNow(b)-dutyNow(a))||(b.cur.length>0)-(a.cur.length>0));ps=ps.slice(0,MESAS.length);
   const used=new Set();ps.forEach(p=>{if(p.cur.length){p.mesa=p.cur[0].mesa;used.add(p.mesa)}});
   ps.forEach(p=>{if(p.cur.length)return;const pref=p.nexts[0]&&p.nexts[0].mesa;p.mesa=(pref&&!used.has(pref))?pref:(MESAS.find(x=>!used.has(x))||1);used.add(p.mesa)});
   return ps.sort((a,b)=>a.mesa-b.mesa)}
