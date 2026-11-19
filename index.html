@@ -240,6 +240,7 @@ var MentoriasCore = (function () {
         if (key === "allowOtherDays") cfg.allowOtherDays = !!v;
         else if (key === "dur") { if (!okDur(v)) return fail("Duración no válida (de 15 a 60 minutos, de 5 en 5)."); cfg.dur = +v; }
         else if (key === "fecha") { var i = +p.i; if (!(i >= 0 && i < DAYS)) return fail("Día no válido."); if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return fail("Fecha no válida."); cfg.fechas[i] = v || ""; }
+        else if (key === "horaEnsayo") { if (v !== "" && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(String(v))) return fail("Hora no válida."); cfg.horaEnsayo = String(v); cfg.ensayoDesde = ctx.nowMs || Date.now(); }
         else if (key === "ensayo") { if (["", "1", "2", "3"].indexOf(String(v)) < 0) return fail("Valor no válido."); cfg.ensayo = String(v); }
         else if (key === "mesaName") { var i2 = +p.i; if (MESAS.indexOf(i2) < 0) return fail("Mesa no válida."); cfg.mesaNames = cfg.mesaNames || {}; var nm = String(v || "").trim().slice(0, 24); cfg.mesaNames[i2] = nm || ("Mesa " + i2); }
         else if (key === "gap") {
@@ -408,7 +409,7 @@ var MentoriasCore = (function () {
       p[3].forEach(function (b) { grid.push({ id: ++id, day: b[0], mid: m.id, from: BLOQ[b[1]][0], to: BLOQ[b[1]][1], dur: 20 }); });
     });
     EXTRA.forEach(function (e) { mentors.push({ id: ++id, name: e[0], email: CORREOS[e[0]] || "", spec: "Por confirmar", tema: TEMAS[e[1]] }); });
-    return { cfg: { pin: "1234", dur: 20, allowOtherDays: true, mtDur: { 1: 20, 2: 20 }, gap: 10, calendar: false, lastCall: null, fechas: ["2026-11-19", "2026-11-20", "2026-11-21"], ensayo: "", ubicacion: "Stand Copec · Parque Bicentenario de Vitacura", mesaNames: defNames() },
+    return { cfg: { pin: "1234", dur: 20, allowOtherDays: true, mtDur: { 1: 20, 2: 20 }, gap: 10, calendar: false, lastCall: null, fechas: ["2026-11-19", "2026-11-20", "2026-11-21"], ensayo: "", horaEnsayo: "", ubicacion: "Stand Copec · Parque Bicentenario de Vitacura", mesaNames: defNames() },
       mentors: mentors, grid: grid, breaks: [], bookings: [], seq: id };
   }
 
@@ -2253,7 +2254,7 @@ function syncDemo(){
 }
 function applyState(pub){
   S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Nueva Conveniencia",2:"Nueva Movilidad",3:"Nuevas Energías",4:"Experiencia de cliente y vinculación con el medio"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
-  S.dur=pub.cfg.dur;S.gap=pub.cfg.gap>=0?pub.cfg.gap:10;S.calendar=!!pub.cfg.calendar;S.allowOtherDays=pub.cfg.allowOtherDays;S.mtDur=pub.cfg.mtDur;S.fechas=pub.cfg.fechas||["","",""];applyDayLabels();S.ensayo=pub.cfg.ensayo||"";S.ubicacion=pub.cfg.ubicacion||S.ubicacion;
+  S.dur=pub.cfg.dur;S.gap=pub.cfg.gap>=0?pub.cfg.gap:10;S.calendar=!!pub.cfg.calendar;S.allowOtherDays=pub.cfg.allowOtherDays;S.mtDur=pub.cfg.mtDur;S.fechas=pub.cfg.fechas||["","",""];applyDayLabels();S.ensayo=pub.cfg.ensayo||"";S.horaEnsayo=pub.cfg.horaEnsayo||"";S.ubicacion=pub.cfg.ubicacion||S.ubicacion;
   S.lastCall=pub.cfg.lastCall||null;S.day=pub.now.day;S.label=pub.now.label||"";S.today=pub.now.today||"";
   SRV.sec=pub.now.sec;SRV.at=performance.now();SRV.frozen=!!pub.now.frozen;S.sec=santiagoSec();
   adoptCall(pub.cfg.lastCall,pub.now.nowMs);firstLoad=false;S.loaded=true;
@@ -2772,7 +2773,7 @@ function renderRecepcion(){
       </details>
       <details class="pg-card acc" data-acc="fechas"${ACC("fechas")}><summary>Fechas, lugar y modo ensayo</summary>
         ${[0,1,2].map(i=>`<div class="setting"><label for="fecha${i}">${DAYS[i]}</label><input type="date" id="fecha${i}" data-fecha="${i}" value="${esc((S.fechas||[])[i]||"")}" style="width:auto"></div>`).join("")}
-        <div class="setting"><label for="ensayoSel">Modo ensayo</label><select id="ensayoSel" style="width:auto"><option value=""${!S.ensayo?" selected":""}>Apagado</option>${[1,2,3].map(i=>`<option value="${i}"${S.ensayo==String(i)?" selected":""}>Simular Día ${i}</option>`).join("")}</select></div>
+        <div class="setting"><label for="ensayoSel">Modo ensayo</label><select id="ensayoSel" style="width:auto"><option value=""${!S.ensayo?" selected":""}>Apagado</option>${[1,2,3].map(i=>`<option value="${i}"${S.ensayo==String(i)?" selected":""}>Simular Día ${i}</option>`).join("")}</select></div>${S.ensayo&&LIVE?`<div class="setting"><label for="horaEns">Hora simulada</label><span style="display:flex;gap:8px;align-items:center"><input type="time" id="horaEns" value="${S.horaEnsayo||""}" style="width:auto"><button type="button" class="btn ghost" id="horaEnsReal">Hora real</button></span></div><p class="note">Fija una hora de la feria (por ejemplo 10:30) para ensayar a cualquier hora. El reloj avanza desde ahí. «Hora real» la quita.</p>`:""}
         <input id="ubicacionIn" value="${esc(S.ubicacion||"")}" placeholder="Ubicación del stand" aria-label="Ubicación del stand">
         <p class="note">El sistema usa estas fechas para saber qué día de la feria es. El modo ensayo sirve para probar antes del evento: apágalo el día de la feria.</p>
       </details>
@@ -3055,6 +3056,7 @@ rb.addEventListener("click",e=>{
   if(e.target.closest("#clearAll")){if(S.sureClear){S.sureClear=false;staff("clearBookings",{},"Todas las reservas fueron borradas")}else{S.sureClear=true;renderRecepcion()}return}
   if(S.sureClear){S.sureClear=false}
   if(e.target.closest("#swDays")){staff("setCfg",{key:"allowOtherDays",value:!S.allowOtherDays});return}
+  if(e.target.closest("#horaEnsReal")){staff("setCfg",{key:"horaEnsayo",value:""});return}
   if(e.target.closest("#swCal")){staff("setCfg",{key:"calendar",value:!S.calendar});return}
   const dg=e.target.closest("[data-delg]");if(dg){staff("gridDel",{id:+dg.dataset.delg});return}
   const dm=e.target.closest("[data-delm]");if(dm){staff("mentorDel",{id:+dm.dataset.delm});return}
@@ -3066,6 +3068,7 @@ rb.addEventListener("change",e=>{
   if(t.dataset.g){t.blur();staff("gridSet",{id:+t.dataset.g,field:t.dataset.f,value:(t.dataset.f==="mid"||t.dataset.f==="dur")?+t.value:t.value});return}
   if(t.dataset.mm){t.blur();staff("mentorSet",{id:+t.dataset.mm,field:t.dataset.f,value:t.value}).then(r=>{if(r&&r.ok&&t.dataset.f==="email")loadEmails()});return}
   if(t.dataset.fecha!=null){t.blur();staff("setCfg",{key:"fecha",i:+t.dataset.fecha,value:t.value});return}
+  if(t.id==="horaEns"){if(t.value)staff("setCfg",{key:"horaEnsayo",value:t.value});return}
   if(t.id==="ensayoSel"){t.blur();staff("setCfg",{key:"ensayo",value:t.value});return}
   if(t.id==="ubicacionIn"){t.blur();staff("setCfg",{key:"ubicacion",value:t.value});return}
   if(t.id==="durSel"){t.blur();staff("setCfg",{key:"dur",value:+t.value});return}
