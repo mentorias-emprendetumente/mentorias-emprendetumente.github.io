@@ -2966,7 +2966,7 @@ setInterval(()=>{
   if(m!==lastMin||b!==lastBanner){lastMin=m;lastBanner=b;softRender()}else updateCounters();
 },1000);
 
-if(LIVE){document.body.classList.add("full","live");poll();setInterval(poll,3500);setInterval(()=>{if(S.view==="pantalla"&&!document.hidden)poll()},1500)}else syncDemo();
+if(LIVE){document.body.classList.add("full","live");poll();setInterval(()=>{if(!document.hidden||S.view==="pantalla")poll()},4000)}else syncDemo();
 if(DEMO){document.getElementById("clockLab").textContent="Modo presentación · hora simulada:";document.getElementById("clockLab").title="Fuera del horario de la feria el prototipo simula que son las 15:10. Entre 10:00 y 19:00 usa la hora real de Santiago."}
 function setFull(on){document.body.classList.toggle("full",on);try{if(on&&document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});if(!on&&document.fullscreenElement)document.exitFullscreen().catch(()=>{})}catch(e){}renderAll()}
 document.getElementById("goFull").addEventListener("click",()=>setFull(true));
