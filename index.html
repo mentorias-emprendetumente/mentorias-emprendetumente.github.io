@@ -23,7 +23,7 @@
  */
 var MentoriasCore = (function () {
   "use strict";
-  var OPEN = 600, CLOSE = 1140, GRACE = 5, MAXCALLS = 3, DAYS = 3, MESAS = [1, 2, 3, 4, 5, 6, 7, 8];
+  var OPEN = 600, CLOSE = 1140, GRACE = 5, MAXCALLS = 3, DAYS = 3, MESAS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
   var LABEL_DIAS = ["Jueves 19", "Viernes 20", "Sábado 21"];
   var TEMAS = ["Nueva Conveniencia", "Nueva Movilidad", "Nuevas Energías", "Experiencia de cliente y vinculación con el medio"];
 
@@ -1877,6 +1877,9 @@ main{padding:16px 16px 40px}
 .tv-grid.many .next .lbl{font-size:1cqw}
 .tv-grid.g2{grid-template-rows:1fr 1fr;gap:.8cqw 2cqw}.tv-grid.g2 .tv-mesa{overflow:hidden;gap:.5cqw}.tv-grid.g2 .now{padding:.7cqw 1.2cqw!important}.tv-grid.g2 .nrow{padding:.25cqw .8cqw!important}.tv-grid.g2 .nrow .n{font-size:1.3cqw!important;line-height:1.15}.tv-grid.g2 .nrow .m{font-size:.9cqw!important}.tv-grid.g2 .next .lbl{margin:0}.tv-grid.g2 .next{gap:.35cqw}.tv-grid.g2 .nrow .n br{display:none}.tv-grid.g2 .nrow .m{margin-left:1cqw}.tv-grid.g2 .nrow .t{font-size:1.4cqw!important}.tv-grid.g2 .now{grid-template-columns:1fr auto;align-items:center}.tv-grid.g2 .now .cd{text-align:right}.tv-grid.g2 .now .cd b{font-size:2.6cqw}.tv-grid.g2 .now .who{font-size:2.2cqw}
 .tv-grid.g3 .tv-mesa h2{font-size:1.7cqw}.tv-grid.g3 .tv-mesa h2 small{font-size:.95cqw}.tv-grid.g3 .now .who{font-size:1.8cqw}.tv-grid.g3 .now .meta{font-size:.95cqw}.tv-grid.g3 .now .lbl{font-size:.85cqw}.tv-grid.g3 .nrow .n{font-size:1.1cqw!important}.tv-grid.g3 .nrow .t{font-size:1.2cqw!important}.tv-grid.g3 .nrow .m{font-size:.8cqw!important}.tv-grid.g3{gap:.6cqw 1.4cqw;padding:1cqw 1.6cqw}
+.tv-grid.g3 .tv-mesa h2 small,.tv-grid.g3 .now .who,.tv-grid.g3 .now .meta{white-space:normal;overflow-wrap:anywhere;line-height:1.15;min-width:0}.tv-grid.g3 .nrow .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tv-grid.g4{gap:.5cqw 1cqw;padding:.8cqw 1.2cqw}.tv-grid.g4 .tv-mesa h2{font-size:1.45cqw}.tv-grid.g4 .tv-mesa h2 small{font-size:.8cqw}.tv-grid.g4 .now{padding:.5cqw .8cqw!important}.tv-grid.g4 .now .who{font-size:1.5cqw}.tv-grid.g4 .now .meta{font-size:.8cqw}.tv-grid.g4 .now .lbl{font-size:.7cqw;letter-spacing:.08em}.tv-grid.g4 .nrow{padding:.2cqw .6cqw!important}.tv-grid.g4 .nrow .n{font-size:.95cqw!important}.tv-grid.g4 .nrow .t{font-size:1cqw!important}.tv-grid.g4 .next .lbl{font-size:.75cqw}
+.tv-grid.g5{gap:.4cqw .8cqw}.tv-grid.g5 .tv-mesa h2{font-size:1.2cqw}.tv-grid.g5 .tv-mesa h2 small{font-size:.7cqw}.tv-grid.g5 .now .who{font-size:1.25cqw}.tv-grid.g5 .now .meta{font-size:.7cqw}.tv-grid.g5 .now .lbl{font-size:.6cqw}.tv-grid.g5 .nrow .n{font-size:.8cqw!important}.tv-grid.g5 .nrow .t{font-size:.85cqw!important}.tv-grid.g5 .next .lbl{font-size:.65cqw}
 @keyframes pulse{50%{filter:brightness(1.15)}}
 @media (prefers-reduced-motion:reduce){.now.wait,.banner{animation:none}}
 
@@ -2250,7 +2253,7 @@ function demoSeeds(){
 if(LIVE){S.mentors=[];S.grid=[];S.bookings=[]}else S.bookings=demoSeeds();
 
 /* ---------- datos: en demo se guardan en esta página; en modo real, en Google Sheets ---------- */
-const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,gap:10,calendar:false,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5",6:"Mesa 6",7:"Mesa 7",8:"Mesa 8"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
+const db=LIVE?null:{cfg:{pin:"1234",dur:S.dur,gap:10,calendar:false,allowOtherDays:S.allowOtherDays,mtDur:S.mtDur,lastCall:null,fechas:["2026-11-19","2026-11-20","2026-11-21"],ensayo:"",ubicacion:S.ubicacion,mesaNames:{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5",6:"Mesa 6",7:"Mesa 7",8:"Mesa 8",9:"Mesa 9",10:"Mesa 10",11:"Mesa 11",12:"Mesa 12"}},mentors:S.mentors,grid:S.grid,breaks:[],bookings:S.bookings,seq:uid};
 let lastCallSeen=null,firstLoad=true;
 function adoptCall(lc,serverNow){
   const key=lc?lc.at+"-"+lc.id+"-"+lc.calls:null;
@@ -2260,11 +2263,11 @@ function adoptCall(lc,serverNow){
   if(fresh){S.banner={name:lc.name,mesa:lc.mesa,mentor:lc.mentor||"",calls:lc.calls,until:Date.now()+12000};if(!LIVE||S.view==="pantalla")beep()}
 }
 function syncDemo(){
-  S.mentors=db.mentors;S.grid=db.grid;S.breaks=db.breaks||[];S.mesaNames=db.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5",6:"Mesa 6",7:"Mesa 7",8:"Mesa 8"};S.bookings=db.bookings;S.dur=db.cfg.dur;S.gap=db.cfg.gap;S.calendar=!!db.cfg.calendar;S.allowOtherDays=db.cfg.allowOtherDays;S.mtDur=db.cfg.mtDur;
+  S.mentors=db.mentors;S.grid=db.grid;S.breaks=db.breaks||[];S.mesaNames=db.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5",6:"Mesa 6",7:"Mesa 7",8:"Mesa 8",9:"Mesa 9",10:"Mesa 10",11:"Mesa 11",12:"Mesa 12"};S.bookings=db.bookings;S.dur=db.cfg.dur;S.gap=db.cfg.gap;S.calendar=!!db.cfg.calendar;S.allowOtherDays=db.cfg.allowOtherDays;S.mtDur=db.cfg.mtDur;
   S.fechas=db.cfg.fechas;applyDayLabels();S.ensayo=db.cfg.ensayo;S.ubicacion=db.cfg.ubicacion;uid=db.seq;adoptCall(db.cfg.lastCall);firstLoad=false;
 }
 function applyState(pub){
-  S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5",6:"Mesa 6",7:"Mesa 7",8:"Mesa 8"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
+  S.mentors=pub.mentors;S.grid=pub.grid;S.breaks=pub.breaks||[];S.mesaNames=pub.cfg.mesaNames||{1:"Mesa 1",2:"Mesa 2",3:"Mesa 3",4:"Mesa 4",5:"Mesa 5",6:"Mesa 6",7:"Mesa 7",8:"Mesa 8",9:"Mesa 9",10:"Mesa 10",11:"Mesa 11",12:"Mesa 12"};S.bookings=pub.bookings.map(b=>Object.assign({},b,{email:b.hasEmail?"si":""}));
   S.dur=pub.cfg.dur;S.gap=pub.cfg.gap>=0?pub.cfg.gap:10;S.calendar=!!pub.cfg.calendar;S.allowOtherDays=pub.cfg.allowOtherDays;S.mtDur=pub.cfg.mtDur;S.fechas=pub.cfg.fechas||["","",""];applyDayLabels();S.ensayo=pub.cfg.ensayo||"";S.horaEnsayo=pub.cfg.horaEnsayo||"";S.ubicacion=pub.cfg.ubicacion||S.ubicacion;
   S.lastCall=pub.cfg.lastCall||null;S.day=pub.now.day;S.label=pub.now.label||"";S.today=pub.now.today||"";
   SRV.sec=pub.now.sec;SRV.at=performance.now();SRV.frozen=!!pub.now.frozen;S.sec=santiagoSec();
@@ -2598,12 +2601,12 @@ function renderTV(){
     if(k.calls&&k.status!=="enmesa")return `<div class="now wait"><div><div class="lbl">LLAMADO ${k.calls} DE 3</div><div class="who">${esc(k.name)}</div><div class="meta">Acércate a ${esc(MN(k.mesa))} · con ${esc(m?m.name:"")}</div></div></div>`;
     return `<div class="now"><div><div class="lbl">EN MENTORÍA</div><div class="who">${esc(k.name)}</div><div class="meta">con ${esc(m?m.name:"")}</div></div></div>`};
   h=h.replace(/<div class="tv-grid[^>]*>/,"");
-  h+=`<div class="tv-grid${nT>2?" many":""}${nT>2?" g2":""}${nT>4?" g3":""}" style="grid-template-columns:repeat(${nT<=2?Math.max(1,nT):nT<=4?2:nT<=6?3:4},1fr)">`;
+  h+=`<div class="tv-grid${nT>2?" many":""}${nT>2?" g2":""}${nT>4?" g3":""}${nT>6?" g4":""}${nT>8?" g5":""}" style="grid-template-columns:repeat(${nT<=2?Math.max(1,nT):nT<=4?2:nT<=6?3:4},1fr);${nT>2?"grid-template-rows:repeat("+Math.ceil(nT/(nT<=4?2:nT<=6?3:4))+",minmax(0,1fr))":""}">`;
   if(!nT){
     h+=`<div class="tv-mesa"><div class="now free"><div><div class="lbl">AHORA</div><div class="who">${nowM<OPEN?"Abrimos a las 10:00":nowM>=CLOSE?"Mentorías finalizadas":"Próximo turno en breve"}</div><div class="meta">${nowM<OPEN?"Reserva con la anfitriona del stand":nowM>=CLOSE?"Gracias por participar":"Reserva con la anfitriona del stand"}</div></div></div></div>`;
   }
   for(const p of pTv){
-    const m=mentorById(p.mid),lim=nT>4?1:nT>2?2:3,vis=p.cur.slice(0,lim);
+    const m=mentorById(p.mid),lim=nT>6?1:nT>4?1:nT>2?2:3,vis=p.cur.slice(0,lim);
     h+=`<div class="tv-mesa"><h2>${esc(MN(p.mesa))}<small>${m?esc(m.name)+(m.tema?" · "+esc(m.tema):""):""}</small></h2>`;
     if(vis.length)h+=vis.map(k=>fila(k,p.mesa)).join("");
     else h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">Disponible</div><div class="meta">Reserva con la anfitriona</div></div></div>`;
