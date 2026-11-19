@@ -2344,13 +2344,16 @@ function panelesTv(){const day=S.day,n=S.sec/60,map={};
   const nowBk=S.bookings.filter(k=>k.day===day&&ACTIVE(k)&&(k.status==="enmesa"||((k.status==="reservado"||k.status==="presente")&&k.start*60<=S.sec&&(k.start+bk(k))*60>S.sec)));
   nowBk.forEach(k=>{if(!k.mid)return;(map[k.mid]=map[k.mid]||{mid:k.mid,cur:[]}).cur.push(k)});
   S.mentors.forEach(m=>{if(!map[m.id]&&blocksOfMentor(day,m.id).some(g=>n>=toMin(g.from)&&n<toMin(g.to)))map[m.id]={mid:m.id,cur:[]}});
-  if(!Object.keys(map).length){const fut=S.grid.filter(g=>g.day===day&&toMin(g.from)>n).sort((a,b)=>toMin(a.from)-toMin(b.from));
-    if(fut.length){const f=toMin(fut[0].from);fut.filter(g=>toMin(g.from)===f).forEach(g=>{map[g.mid]={mid:g.mid,cur:[]}})}}
+  /* si sobra espacio (menos de 4 mesas), también se muestran los mentores cuyo bloque parte en los próximos 30 min; si no hay nadie, los del próximo bloque */
+  const addSoon=(gs)=>gs.forEach(g=>{if(!map[g.mid]&&mentorById(g.mid))map[g.mid]={mid:g.mid,cur:[],soon:g.from}});
+  const futs=S.grid.filter(g=>g.day===day&&toMin(g.from)>n).sort((a,b)=>toMin(a.from)-toMin(b.from));
+  if(Object.keys(map).length<4)addSoon(futs.filter(g=>toMin(g.from)<=n+30));
+  if(!Object.keys(map).length&&futs.length){const f=toMin(futs[0].from);addSoon(futs.filter(g=>toMin(g.from)===f))}
   let ps=Object.values(map).filter(p=>mentorById(p.mid));
   ps.forEach(p=>{p.cur.sort((a,b)=>(a.status==="enmesa"?0:1)-(b.status==="enmesa"?0:1)||a.start-b.start);p.nexts=S.bookings.filter(k=>k.day===day&&k.mid===p.mid&&WAITING(k)&&!p.cur.includes(k)&&(k.start+bk(k))*60>S.sec).sort((a,b)=>a.start-b.start)});
   const dutyNow=p=>blocksOfMentor(day,p.mid).some(g=>n>=toMin(g.from)&&n<toMin(g.to));
-  ps=ps.filter(p=>dutyNow(p)||p.cur.some(k=>k.status!=="enmesa"||k.endsAt>S.sec));
-  ps.sort((a,b)=>(dutyNow(b)-dutyNow(a))||(b.cur.length>0)-(a.cur.length>0));ps=ps.slice(0,MESAS.length);
+  ps=ps.filter(p=>p.soon||dutyNow(p)||p.cur.some(k=>k.status!=="enmesa"||k.endsAt>S.sec));
+  ps.sort((a,b)=>(!!a.soon-!!b.soon)||(dutyNow(b)-dutyNow(a))||(b.cur.length>0)-(a.cur.length>0));ps=ps.slice(0,MESAS.length);
   const used=new Set();ps.forEach(p=>{if(p.cur.length){p.mesa=p.cur[0].mesa;used.add(p.mesa)}});
   ps.forEach(p=>{if(p.cur.length)return;const pref=p.nexts[0]&&p.nexts[0].mesa;p.mesa=(pref&&!used.has(pref))?pref:(MESAS.find(x=>!used.has(x))||1);used.add(p.mesa)});
   return ps.sort((a,b)=>a.mesa-b.mesa)}
@@ -2609,6 +2612,7 @@ function renderTV(){
     const m=mentorById(p.mid),lim=nT>6?1:nT>4?1:nT>2?2:3,vis=p.cur.slice(0,lim);
     h+=`<div class="tv-mesa"><h2>${esc(MN(p.mesa))}<small>${m?esc(m.name)+(m.tema?" · "+esc(m.tema):""):""}</small></h2>`;
     if(vis.length)h+=vis.map(k=>fila(k,p.mesa)).join("");
+    else if(p.soon)h+=`<div class="now free"><div><div class="lbl">PRÓXIMO BLOQUE</div><div class="who">Desde las ${esc(p.soon)}</div><div class="meta">Reserva con la anfitriona</div></div></div>`;
     else h+=`<div class="now free"><div><div class="lbl">AHORA</div><div class="who">Disponible</div><div class="meta">Reserva con la anfitriona</div></div></div>`;
     const nexts=p.nexts.slice(0,nT>4?1:nT>2?(vis.length>1?1:2):(vis.length>1?2:3));
     h+=`<div class="next"><div class="lbl">PRÓXIMOS</div>`;
