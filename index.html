@@ -2634,7 +2634,7 @@ function renderKPI(){
   const data=S.kpiSrc==="ejemplo"?exampleData():liveData();
   const tally=list=>{const t={ok:0,no:0,ca:0,pend:0,n:list.length};list.forEach(b=>t[OUT(b)]++);t.closed=t.ok+t.no+t.ca;return t};
   const all=tally(data), cap=capDay, capAll=cap(0)+cap(1)+cap(2);
-  let h=`<div class="kx-src" role="group" aria-label="Origen de los datos">Datos: <button type="button" data-ks="ejemplo" aria-pressed="${S.kpiSrc==="ejemplo"}">Ejemplo al cierre de la feria</button><button type="button" data-ks="vivo" aria-pressed="${S.kpiSrc==="vivo"}">En vivo (demo)</button></div>`;
+  let h=`<div class="kx-src" role="group" aria-label="Origen de los datos">Datos: <button type="button" data-ks="ejemplo" aria-pressed="${S.kpiSrc==="ejemplo"}">Ejemplo al cierre de la feria</button><button type="button" data-ks="vivo" aria-pressed="${S.kpiSrc==="vivo"}">En vivo</button></div>`;
   h+=`<div class="kx-tiles">
     <div class="kx-t"><b>${all.n}</b><span>reservas en los 3 días</span></div>
     <div class="kx-t"><b>${all.ok}</b><span>mentorías realizadas</span></div>
