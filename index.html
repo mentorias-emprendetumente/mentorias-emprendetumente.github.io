@@ -1815,6 +1815,18 @@ main{padding:16px 16px 40px}
 .nxt button.go{background:var(--ok);border-color:var(--ok);color:#fff}
 .nxt button:disabled{border-color:var(--line);color:#a9b3c4;background:#fff}
 .nxt.ready{border-color:var(--ok);background:#f3fbf6}
+.mt-bar{display:flex;flex-wrap:wrap;gap:8px;padding:10px 22px;background:#dde3f4;border-bottom:1px solid #b9c3e0}
+.mt-bar:empty{display:none}
+.mt-bar .chip{background:#fff;border-color:#9aa7d2;color:var(--navy)}
+.mt-bar .chip[aria-pressed="true"]{background:var(--navy);border-color:var(--navy);color:#fff}
+.mt-all{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:stretch}
+.mt-card{border:2px solid var(--navy);border-radius:16px;padding:14px 16px;background:#fff}
+.mt-card h3{margin:0;font-size:22px;color:var(--navy)}
+.mt-card .sp{margin:2px 0 10px;color:var(--muted,#5a6280);font-size:14px}
+.mt-card .mt-now{background:#eef1fb;border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.mt-card .mt-now .l{font-size:12px;letter-spacing:.06em;font-weight:700;color:#5a6280}
+.mt-card .mt-now .w{font-size:26px;font-weight:700;color:var(--navy)}
+.mt-card h4{margin:6px 0;font-size:15px;color:var(--navy)}
 .t-head .chip{background:transparent;color:#fff;border-color:rgba(255,255,255,.45)}
 .t-head .chip[aria-pressed="true"]{background:#fff;color:var(--navy);border-color:#fff}
 .durpick{display:flex;align-items:center;gap:8px;font-size:15px;color:var(--muted);flex-wrap:wrap}
@@ -2167,8 +2179,8 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
     <div class="tablet"><div class="t-screen">
       <div class="t-head">
         <div><a class="homebtn" href="#">← Inicio</a><h1 id="mtTitle">Mesa 1</h1><p id="mtSub"></p></div>
-        <div class="days" id="mtChips" role="group" aria-label="Vista de mesa" style="margin:0"></div>
       </div>
+      <div class="mt-bar" id="mtChips" role="group" aria-label="Elegir mesa"></div>
       <div class="t-body" id="mentorBody"></div>
     </div></div>
   </section>
@@ -2276,7 +2288,7 @@ function applyState(pub){
 }
 function toast(msg){if(!msg)return;let t=document.getElementById("toast");if(!t){t=document.createElement("div");t.id="toast";t.className="toast";t.setAttribute("role","status");document.body.appendChild(t)}t.textContent=msg;t.style.display="block";clearTimeout(t._h);t._h=setTimeout(()=>{t.style.display="none"},4500)}
 function authFailed(){S.pinValue=null;S.unlocked=false;try{localStorage.removeItem("mentorias_pin")}catch(e){}toast("El PIN cambió. Ingrésalo de nuevo.");if(S.view==="tablet"){S.hostTab=S.prodMode?"pin":"reserva";S.pinTarget=S.prodMode?"live":S.pinTarget;S.pinIn=""}renderAll()}
-function roleNow(){return S.view==="tablet"?(S.prodMode?"produccion":"anfitriona"):S.view==="mentor"?"mesa"+S.mt:S.view==="panel"||S.view==="mentores"?"mentores":S.view==="pantalla"?"visor":""}
+function roleNow(){return S.view==="tablet"?(S.prodMode?"produccion":"anfitriona"):S.view==="mentor"?"mesa"+(S.mt||1):S.view==="panel"||S.view==="mentores"?"mentores":S.view==="pantalla"?"visor":""}
 async function act(action,payload,pinOverride){
   const pin=pinOverride!=null?pinOverride:S.pinValue;
   if(!LIVE){const r=MentoriasCore.run(db,{day:S.day,sec:S.sec,nowMs:Date.now()},action,payload,pin);syncDemo();return r}
@@ -2469,29 +2481,51 @@ function renderMentorPin(){
     <div class="err" role="status">${S.mpinErr}</div>
     <div class="keys">${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" data-mpin="${n}">${n}</button>`).join("")}<span></span><button type="button" data-mpin="0">0</button><button type="button" data-mpin="b" aria-label="Borrar" style="font-size:16px">Borrar</button></div></div>`;
 }
+function renderMentorAll(){
+  const day=S.day,ps=panelesTv();
+  document.getElementById("mtTitle").textContent="Vista de mesa";
+  document.getElementById("mtSub").textContent=DAYS[day]+(S.label?" · "+S.label:"")+" · todas las mesas";
+  let h=ps.length?`<div class="mt-all">`:`<p class="note">No hay mentores en atención por ahora.</p>`;
+  ps.forEach(p=>{
+    const m=mentorById(p.mid);
+    h+=`<div class="mt-card"><h3>${MNr(p.mesa)} · ${esc(m.name)}</h3><p class="sp">${esc(m.tema||m.spec||"")}</p>`;
+    if(p.cur.length)h+=p.cur.map(k=>`<div class="mt-now"><div class="l">EN MENTORÍA · RESERVADO ${fmt(k.start)}</div><div class="w">${esc(k.name)}</div></div>`).join("");
+    else if(p.soon)h+=`<div class="mt-now"><div class="l">PRÓXIMO BLOQUE</div><div class="w">Desde las ${esc(p.soon)}</div></div>`;
+    else h+=`<div class="mt-now"><div class="l">DISPONIBLE</div><div class="w" style="color:var(--ok)">Mesa disponible</div></div>`;
+    h+=`<h4>Siguientes en ${MNr(p.mesa)}</h4>`;
+    const nx=p.nexts.slice(0,6);
+    if(!nx.length)h+=`<p class="note">No hay más reservas por ahora.</p>`;
+    nx.forEach(n=>{h+=`<div class="nxt"><span class="t tnum">${fmt(n.start)}</span><div><div class="n">${esc(n.name)}</div><div class="small-note">con ${esc(m.name)}</div></div></div>`});
+    h+=`</div>`;
+  });
+  if(ps.length)h+=`</div>`;
+  document.getElementById("mentorBody").innerHTML=h;
+  return ps;
+}
 function renderMentor(){
-  const mesa=S.mt,day=S.day;
-  document.getElementById("mtChips").innerHTML=MESAS.map(n=>`<button type="button" class="chip" data-mt="${n}" aria-pressed="${n===mesa}">${MN(n)}</button>`).join("");
-  const act=activeSession(day,mesa), cur=curBooking(day,mesa);
-  const shown=act||(cur&&cur.status!=="finalizada"?cur:null), m=mentorOf(shown);
-  document.getElementById("mtTitle").textContent=MNr(mesa)+(m?" · "+m.name:"");
-  document.getElementById("mtSub").textContent=(m?m.spec+" · ":"")+DAYS[day]+(S.label?" · "+S.label:"")+" · vista de mesa";
-  let h=`<div class="mt-wrap"><div class="cur">`+breakCtl(mesa);
+  const mesa=S.mt||0,day=S.day,ps=panelesTv();
+  if(mesa&&!ps.some(p=>p.mesa===mesa))S.mt=0;
+  const sel=S.mt||0;
+  document.getElementById("mtChips").innerHTML=`<button type="button" class="chip" data-mt="0" aria-pressed="${sel===0}">Todas las mesas</button>`+ps.map(p=>`<button type="button" class="chip" data-mt="${p.mesa}" aria-pressed="${p.mesa===sel}">${MN(p.mesa)}</button>`).join("");
+  if(!sel){renderMentorAll();return}
+  const act=activeSession(day,sel), cur=curBooking(day,sel);
+  const shown=act||(cur&&cur.status!=="finalizada"?cur:null), m=mentorOf(shown)||mentorById((ps.find(p=>p.mesa===sel)||{}).mid);
+  document.getElementById("mtTitle").textContent=MNr(sel)+(m?" · "+m.name:"");
+  document.getElementById("mtSub").textContent=(m?(m.tema||m.spec)+" · ":"")+DAYS[day]+(S.label?" · "+S.label:"");
+  let h=`<div class="mt-wrap"><div class="cur">`+breakCtl(sel);
   if(act){
-    const left=act.endsAt-S.sec, early=act.startedAt<act.start*60, am=mentorOf(act);
-    h+=`<div class="lbl">En mentoría · reservado ${fmt(act.start)}${early?" (entró antes)":""}</div><div class="who">${esc(act.name)}</div><p class="meta">con ${esc(am?am.name:"")}${am&&am.tema?" · "+esc(am.tema):""}</p>
-      <div><div class="timer-l">${left>0?"Tiempo restante":"Tiempo cumplido"}</div><div class="timer${left<120?" low":""}" data-end="${act.endsAt}">${mmss(left)}</div></div>`;
+    const early=act.startedAt<act.start*60, am=mentorOf(act);
+    h+=`<div class="lbl">En mentoría · reservado ${fmt(act.start)}${early?" (entró antes)":""}</div><div class="who">${esc(act.name)}</div><p class="meta">con ${esc(am?am.name:"")}${am&&am.tema?" · "+esc(am.tema):""}</p>`;
   } else if(cur&&cur.status!=="finalizada"){
-    const k=cur,end=(k.start+bk(k))*60,km=mentorOf(k);
-    h+=`<div class="lbl">Turno ${fmt(k.start)} – ${fmt(k.start+bk(k))}</div>
-      <div class="who">${esc(k.name)}</div><p class="meta">con ${esc(km?km.name:"")}${km&&km.tema?" · "+esc(km.tema):""}</p><span class="st ${k.status}" style="justify-self:start">${STLAB[k.status]}</span>
-      <div><div class="timer-l">Le quedan a este turno</div><div class="timer" data-end="${end}">${mmss(end-S.sec)}</div></div>`;
+    const k=cur,km=mentorOf(k);
+    h+=`<div class="lbl">En mentoría · reservado ${fmt(k.start)}</div>
+      <div class="who">${esc(k.name)}</div><p class="meta">con ${esc(km?km.name:"")}${km&&km.tema?" · "+esc(km.tema):""}</p>`;
   } else {
     h+=`<div class="lbl">Turno actual</div><div class="who" style="color:var(--ok)">Mesa libre</div>`;
     if(cur&&cur.status==="finalizada")h+=`<p class="meta">${esc(cur.name)} ya terminó.</p>`;
   }
-  h+=`</div><div class="side-list"><h3>Siguientes en ${MN(mesa)}</h3>`;
-  const nx=upcoming(day,mesa,cur?cur.id:null).slice(0,6);
+  h+=`</div><div class="side-list"><h3>Siguientes en ${MN(sel)}</h3>`;
+  const nx=upcoming(day,sel,cur?cur.id:null).slice(0,6);
   if(!nx.length)h+=`<p class="note">No hay más reservas por ahora.</p>`;
   for(const n of nx){
     const nm=mentorOf(n);
@@ -2602,7 +2636,7 @@ function renderTV(){
   const pTv=panelesTv(),nT=pTv.length;
   const fila=(k,mz)=>{const m=mentorOf(k);
     if(k.calls&&k.status!=="enmesa")return `<div class="now wait"><div><div class="lbl">LLAMADO ${k.calls} DE 3</div><div class="who">${esc(k.name)}</div><div class="meta">Acércate a ${esc(MN(k.mesa))} · con ${esc(m?m.name:"")}</div></div></div>`;
-    return `<div class="now"><div><div class="lbl">EN MENTORÍA</div><div class="who">${esc(k.name)}</div><div class="meta">con ${esc(m?m.name:"")}</div></div></div>`};
+    return `<div class="mt-now"><div><div class="lbl">EN MENTORÍA</div><div class="who">${esc(k.name)}</div><div class="meta">con ${esc(m?m.name:"")}</div></div></div>`};
   h=h.replace(/<div class="tv-grid[^>]*>/,"");
   h+=`<div class="tv-grid${nT>2?" many":""}${nT>2?" g2":""}${nT>4?" g3":""}${nT>6?" g4":""}${nT>8?" g5":""}" style="grid-template-columns:repeat(${nT<=2?Math.max(1,nT):nT<=4?2:nT<=6?3:4},1fr);${nT>2?"grid-template-rows:repeat("+Math.ceil(nT/(nT<=4?2:nT<=6?3:4))+",minmax(0,1fr))":""}">`;
   if(!nT){
@@ -2890,7 +2924,7 @@ function route(){
   if(LIVE){const v=(location.hash||"").slice(1);
     try{if(v==="produccion"||v==="")sessionStorage.removeItem("fromProd");document.body.classList.toggle("fromprod",sessionStorage.getItem("fromProd")==="1"&&v!=="produccion"&&v!=="")}catch(e){}
     if(v==="anfitriona"||v==="tablet")S.view="tablet";
-    else if(/^mentor-([1-9]|1[0-2])$/.test(v)){S.view="mentor";S.mt=+v.slice(7)}
+    else if(/^mentor(-([1-9]|1[0-2]))?$/.test(v)){S.view="mentor";S.mt=0}
     else if(v==="mentores")S.view="mentores";
     else if(/^panel-\d+$/.test(v)){S.view="panel";S.pm=+v.slice(6);S.pDay=null;if(!S.pinValue){try{S.pinValue=localStorage.getItem("mentorias_pin")}catch(e){}}}
     else if(v==="pantalla")S.view="pantalla";
