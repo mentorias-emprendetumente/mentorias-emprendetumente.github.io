@@ -2636,7 +2636,7 @@ function renderTV(){
   const pTv=panelesTv(),nT=pTv.length;
   const fila=(k,mz)=>{const m=mentorOf(k);
     if(k.calls&&k.status!=="enmesa")return `<div class="now wait"><div><div class="lbl">LLAMADO ${k.calls} DE 3</div><div class="who">${esc(k.name)}</div><div class="meta">Acércate a ${esc(MN(k.mesa))} · con ${esc(m?m.name:"")}</div></div></div>`;
-    return `<div class="mt-now"><div><div class="lbl">EN MENTORÍA</div><div class="who">${esc(k.name)}</div><div class="meta">con ${esc(m?m.name:"")}</div></div></div>`};
+    return `<div class="now"><div><div class="lbl">EN MENTORÍA</div><div class="who">${esc(k.name)}</div><div class="meta">con ${esc(m?m.name:"")}</div></div></div>`};
   h=h.replace(/<div class="tv-grid[^>]*>/,"");
   h+=`<div class="tv-grid${nT>2?" many":""}${nT>2?" g2":""}${nT>4?" g3":""}${nT>6?" g4":""}${nT>8?" g5":""}" style="grid-template-columns:repeat(${nT<=2?Math.max(1,nT):nT<=4?2:nT<=6?3:4},1fr);${nT>2?"grid-template-rows:repeat("+Math.ceil(nT/(nT<=4?2:nT<=6?3:4))+",minmax(0,1fr))":""}">`;
   if(!nT){
