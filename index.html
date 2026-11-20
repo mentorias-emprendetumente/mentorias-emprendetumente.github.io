@@ -352,7 +352,7 @@ var MentoriasCore = (function () {
     var R = make(db, ctx);
     if (!R.A.hasOwnProperty(action)) return { ok: false, msg: "Acción no válida." };
     if (!PUBLIC[action] && String(pin || "") !== String(db.cfg.pin)) {
-      /* Agenda de Control: el mentor opera solo sobre sus propias reservas, sin PIN */
+      /* Agenda de Mentor: el mentor opera solo sobre sus propias reservas, sin PIN */
       var pl = payload || {}, own = MENTOR_OWN[action] && pl.asMid && db.bookings.filter(function (x) { return x.id === +pl.id && x.mid === +pl.asMid; })[0];
       if (!own) return { ok: false, msg: "PIN incorrecto.", auth: false };
     }
@@ -2140,7 +2140,7 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
       <div class="home-grid">
         <a href="#anfitriona">Control Anfitrión<small>Reservas, recepción, parrilla y métricas</small></a>
         <a href="#pantalla">Pantalla de llamados<small>Turnos y llamados para el público</small></a>
-        <a href="#mentores">Agenda de Control<small>Agenda de cada mentor: citas, llamados y horarios</small></a>
+        <a href="#mentores">Agenda de Mentor<small>Agenda de cada mentor: citas y llamados</small></a>
         <a href="#mentor-1">Tablet de mesa<small>Opcional: una pantalla fija por mesa (1 a 5)</small></a>
         <a href="#produccion" class="prodlink">Producción<small>Control y vista de todo el sistema (pide PIN)</small></a>
       </div>
@@ -2175,12 +2175,12 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
 
   <section class="view" id="v-mentores" aria-label="Elegir mentor">
     <div class="tablet"><div class="t-screen">
-      <div class="t-head"><div><a class="homebtn" href="#">← Inicio</a><h1>Agenda de Control</h1><p>Elige tu nombre para abrir tu agenda</p></div></div>
+      <div class="t-head"><div><a class="homebtn" href="#">← Inicio</a><h1>Agenda de Mentor</h1><p>Elige tu nombre para abrir tu agenda</p></div></div>
       <div class="t-body" id="chooseBody"></div>
     </div></div>
   </section>
 
-  <section class="view" id="v-panel" aria-label="Agenda de Control">
+  <section class="view" id="v-panel" aria-label="Agenda de Mentor">
     <div class="tablet"><div class="t-screen">
       <div class="t-head">
         <div><a class="homebtn" href="#mentores">← Mentores</a><h1 id="pnTitle">Mi agenda</h1><p id="pnSub"></p></div>
