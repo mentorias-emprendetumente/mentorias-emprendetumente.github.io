@@ -1958,6 +1958,7 @@ main{padding:16px 16px 40px}
 .nmdays input{width:20px;height:20px;accent-color:var(--navy)}
 /* métricas */
 .k-ok{--c:#2f6fd6}.k-no{--c:#e1251b}.k-ca{--c:#d99a00}
+.kx-dl{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}.kx-dl button{background:var(--red,#da291c);color:#fff;border:0;border-radius:10px;padding:12px 20px;font-weight:800;font-size:16px;cursor:pointer}.kx-dl span{font-size:13px;color:var(--muted)}
 .kx-src{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;font-size:14px;color:var(--muted)}
 .kx-src button{border:2px solid var(--line);background:#fff;border-radius:99px;padding:6px 14px;font-weight:700;font-size:14px}
 .kx-src button[aria-pressed="true"]{border-color:var(--navy);background:var(--navy);color:#fff}
@@ -2175,7 +2176,7 @@ body.full .tv-screen{width:min(100vw,177.78vh);border-radius:0}
     </div></div>
   </section>
 
-  <section class="view" id="v-mentor" aria-label="Tablet del mentor">
+  <section class="view" id="v-mentor" aria-label="Vista de mesa">
     <div class="tablet"><div class="t-screen">
       <div class="t-head">
         <div><a class="homebtn" href="#">← Inicio</a><h1 id="mtTitle">Mesa 1</h1><p id="mtSub"></p></div>
@@ -2474,7 +2475,7 @@ function resetTablet(){S.tab={step:"pick",tema:S.tab.tema||"",day:S.day,bTema:""
 
 /* ---------- tablet mentor ---------- */
 function renderMentorPin(){
-  document.getElementById("mtTitle").textContent=MNr(S.mt)+" · tablet del mentor";
+  document.getElementById("mtTitle").textContent="Vista de mesa";
   document.getElementById("mtSub").textContent="Ingresa el PIN del día una sola vez en este equipo";
   document.getElementById("mentorBody").innerHTML=`<div class="pin"><h2>PIN del día</h2>
     <div class="dots" aria-label="${S.mpinIn.length} de 4 dígitos">${[0,1,2,3].map(i=>`<span class="${i<(S.mpinBusy?4:S.mpinIn.length)?"on":""}"></span>`).join("")}</div>
@@ -2684,8 +2685,9 @@ function exampleData(){
   }
   return out;
 }
-function liveData(){return S.bookings.map(b=>({day:b.day,mesa:b.mesa,mid:b.mid,start:b.start,status:b.status,advance:!!b.advance,source:b.source||"tablet",email:!!b.email,early:b.startedAt!=null&&b.startedAt<b.start*60,calls:b.calls||0,
-  mins:b.status==="enmesa"&&b.startedAt!=null?Math.max(0,(S.sec-b.startedAt)/60):b.status==="finalizada"?(b.startedAt!=null&&b.endedAt!=null?Math.max(0,(b.endedAt-b.startedAt)/60):bk(b)):0}))}
+function liveData(){return S.bookings.map(b0=>{const done=(b0.status==="reservado"||b0.status==="presente"||b0.status==="enmesa")&&(b0.day<S.day||(b0.day===S.day&&(b0.start+bk(b0))*60<=S.sec)),b=done?{...b0,status:"finalizada"}:b0;
+  return {day:b.day,mesa:b.mesa,mid:b.mid,start:b.start,status:b.status,advance:!!b.advance,source:b.source||"tablet",email:!!b.email,early:b.startedAt!=null&&b.startedAt<b.start*60,calls:b.calls||0,
+  mins:b.status==="enmesa"&&b.startedAt!=null?Math.max(0,(S.sec-b.startedAt)/60):b.status==="finalizada"?(b.startedAt!=null&&b.endedAt!=null?Math.max(0,(b.endedAt-b.startedAt)/60):bk(b)):0}})}
 const hm=m=>{m=Math.round(m);const h=Math.floor(m/60);return h?h+" h "+String(m%60).padStart(2,"0")+" min":m+" min"};
 const OUT=b=>b.status==="finalizada"||b.status==="enmesa"?"ok":b.status==="liberado"?"no":b.status==="cancelada"?"ca":"pend";
 const pct=(a,b)=>b?Math.round(a/b*100):0;
@@ -2693,7 +2695,7 @@ function renderKPI(){
   const data=S.kpiSrc==="ejemplo"?exampleData():liveData();
   const tally=list=>{const t={ok:0,no:0,ca:0,pend:0,n:list.length};list.forEach(b=>t[OUT(b)]++);t.closed=t.ok+t.no+t.ca;return t};
   const all=tally(data), cap=capDay, capAll=cap(0)+cap(1)+cap(2);
-  let h=`<div class="kx-src" role="group" aria-label="Origen de los datos">Datos: <button type="button" data-ks="ejemplo" aria-pressed="${S.kpiSrc==="ejemplo"}">Ejemplo al cierre de la feria</button><button type="button" data-ks="vivo" aria-pressed="${S.kpiSrc==="vivo"}">En vivo</button></div>`;
+  let h=`<div class="kx-dl"><button type="button" data-dl="1">⬇ Descargar métricas</button><span>Resumen ejecutivo de los 3 días (se guarda como PDF)</span></div><div class="kx-src" role="group" aria-label="Origen de los datos">Datos: <button type="button" data-ks="ejemplo" aria-pressed="${S.kpiSrc==="ejemplo"}">Ejemplo al cierre de la feria</button><button type="button" data-ks="vivo" aria-pressed="${S.kpiSrc==="vivo"}">En vivo</button></div>`;
   h+=`<div class="kx-tiles">
     <div class="kx-t"><b>${all.n}</b><span>reservas en los 3 días</span></div>
     <div class="kx-t"><b>${all.ok}</b><span>mentorías realizadas</span></div>
@@ -2749,6 +2751,76 @@ function renderKPI(){
   </div>
   <p class="note" style="margin-top:12px">${S.kpiSrc==="ejemplo"?"Datos de ejemplo para mostrar cómo se verá el informe al terminar la feria.":"Datos de esta demo en vivo."} En la versión real, estas métricas salen de la planilla y se pueden exportar para comparar con la próxima actividad.</p>`;
   return h;
+}
+/* ---------- informe descargable de métricas (siempre con los datos en vivo, nunca con el ejemplo) ---------- */
+function informeMetricas(){
+  const ended=b=>b.day<S.day||(b.day===S.day&&(b.start+bk(b))*60<=S.sec);
+  /* misma regla que el sistema: lo que ya terminó y no se canceló ni quedó como «No llegó» cuenta como realizado */
+  const D=S.bookings.map(b=>{let st=b.status;if((st==="reservado"||st==="presente"||st==="enmesa")&&ended(b))st="finalizada";
+    const o=st==="finalizada"?"ok":st==="liberado"?"no":st==="cancelada"?"ca":"pend";
+    const mins=o==="ok"?(b.startedAt!=null&&b.endedAt!=null?Math.max(0,(b.endedAt-b.startedAt)/60):bk(b)):0;
+    return {day:b.day,mid:b.mid,start:b.start,o,mins,calls:b.calls||0,advance:!!b.advance,email:!!b.email,m:mentorOf(b)}});
+  const tally=l=>{const t={n:l.length,ok:0,no:0,ca:0,pend:0};l.forEach(b=>t[b.o]++);t.closed=t.ok+t.no+t.ca;return t};
+  const sum=l=>l.reduce((a,b)=>a+b.mins,0), avg=l=>{const x=l.filter(b=>b.o==="ok");return x.length?sum(x)/x.length:0};
+  const all=tally(D), cap=[0,1,2].map(capDay), capAll=cap[0]+cap[1]+cap[2], tot=sum(D);
+  const days=[0,1,2].map(d=>{const l=D.filter(b=>b.day===d);return {d,l,t:tally(l),cap:cap[d],h:sum(l),av:avg(l)}});
+  const best=days.reduce((a,b)=>b.t.ok>a.t.ok?b:a,days[0]);
+  const byC=TEMAS.map(tm=>({n:tm,l:D.filter(b=>b.m&&b.m.tema===tm)}));
+  const otros=D.filter(b=>!b.m||!TEMAS.includes(b.m.tema));
+  if(otros.length)byC.push({n:"Otros (mentores retirados de la parrilla)",l:otros});
+  byC.forEach(c=>c.t=tally(c.l));
+  const topC=byC.filter(c=>c.n.indexOf("Otros")!==0).reduce((a,b)=>b.t.ok>a.t.ok?b:a,byC[0]);
+  const hrs=Array.from({length:(CLOSE-OPEN)/60},(_,i)=>OPEN/60+i).map(hh=>D.filter(b=>b.o==="ok"&&Math.floor(b.start/60)===hh).length);
+  const mxH=Math.max(1,...hrs),pk=hrs.indexOf(Math.max(...hrs));
+  const byM={};D.forEach(b=>{const k=b.m?b.m.id:0;(byM[k]=byM[k]||{name:b.m?b.m.name:"Mentores retirados de la parrilla",spec:b.m?b.m.tema:"—",l:[]}).l.push(b)});
+  const ms=Object.values(byM).map(x=>({...x,t:tally(x.l),h:sum(x.l)})).sort((a,b)=>b.t.ok-a.t.ok||a.name.localeCompare(b.name));
+  const adv=D.filter(b=>b.advance).length, mail=D.filter(b=>b.email).length, multi=D.filter(b=>b.o==="ok"&&b.calls>1).length;
+  const fe=d=>{const f=dateForDay(d);return f?f.split("-").reverse().join("-"):""};
+  const n=(v)=>String(v).replace(".",","), p1=(v)=>n((Math.round(v*10)/10).toFixed(1));
+  const row=(a,L)=>"<tr>"+a.map((c,i)=>`<td${i>=(L||1)?' class="r"':""}>${c}</td>`).join("")+"</tr>";
+  const bar=(v,m,c)=>`<div class="b"><span style="width:${Math.round(v/m*100)}%;background:${c||"#1f3089"}"></span></div>`;
+  const now=new Date(), gen=now.toLocaleDateString("es-CL",{day:"numeric",month:"long",year:"numeric"})+" · "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+  const css=`@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:Helvetica,Arial,sans-serif;color:#1c2e4f;font-size:11pt;line-height:1.45;margin:0}
+  .top{background:#1f3089;color:#fff;padding:16px 20px;border-bottom:5px solid #da291c;border-radius:6px;margin-bottom:12px}.top h1{margin:0;font-size:20pt}.top p{margin:4px 0 0;color:#cdd8ec;font-size:10pt}
+  h2{color:#1f3089;font-size:13.5pt;margin:18px 0 6px;border-bottom:2px solid #e3e8f1;padding-bottom:3px;break-after:avoid}
+  .kp{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0}.kp div{background:#f5f7fb;border:1px solid #d6dde9;border-top:4px solid #da291c;border-radius:6px;padding:8px;text-align:center}
+  .kp b{display:block;font-size:20pt;color:#1f3089;line-height:1.1}.kp span{font-size:9pt;color:#4a5b7a}
+  table{border-collapse:collapse;width:100%;margin:6px 0;font-size:9.5pt;break-inside:auto}tr{break-inside:avoid}th{background:#1f3089;color:#fff;text-align:left;padding:5px 7px}th.r,td.r{text-align:right}
+  td{border:1px solid #d6dde9;padding:5px 7px;white-space:nowrap}td:first-child{white-space:normal}.keep{break-inside:avoid}tr:nth-child(even) td{background:#f5f7fb}tfoot td{font-weight:700;background:#e8edf7!important}
+  ul{padding-left:20px;margin:6px 0}li{margin:3px 0}.note{background:#fdf3dc;border-left:4px solid #c9921a;padding:8px 12px;margin:10px 0;border-radius:4px;font-size:9.5pt;break-inside:avoid}
+  .b{background:#e9edf5;border-radius:3px;height:10px;width:100%}.b span{display:block;height:10px;border-radius:3px}
+  .imp{position:fixed;top:10px;right:10px}.imp button{background:#da291c;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer}
+  @media print{.imp{display:none}}`;
+  const body=`<div class="imp"><button onclick="print()">Imprimir / Guardar como PDF</button></div>
+  <div class="top"><h1>Métricas del evento · 3 días</h1><p>Feria Emprende tu Mente 2026 · ${esc(S.ubicacion||"Stand Copec")}<br>Jueves ${fe(0)}, viernes ${fe(1)} y sábado ${fe(2)} · Generado el ${gen}</p></div>
+  <div class="kp"><div><b>${all.n}</b><span>reservas</span></div><div><b>${all.ok}</b><span>mentorías realizadas (${pct(all.ok,all.closed)}% de las cerradas)</span></div><div><b>${hm(tot)}</b><span>de mentoría efectiva</span></div><div><b>${pct(all.ok,capAll)}%</b><span>de los cupos ocupados (${all.ok} de ${capAll})</span></div></div>
+  <h2>1. Resumen ejecutivo</h2><ul>
+  <li>Se realizaron <b>${all.ok} mentorías</b> sobre ${all.n} reservas: ${all.ca} canceladas${all.no?`, ${all.no} «No llegó»`:""}${all.pend?` y ${all.pend} sin cierre`:""}.</li>
+  <li>Mejor día: <b>${DAYS[best.d]}</b>, con ${best.t.ok} mentorías realizadas y ${pct(best.t.ok,best.cap)}% de ocupación.</li>
+  <li>Hora de mayor demanda: <b>${10+pk}:00 a ${11+pk}:00</b> (${hrs[pk]} mentorías en los 3 días).</li>
+  <li>Temática más pedida: <b>${esc(topC.n)}</b> (${topC.t.ok} mentorías, ${pct(topC.t.ok,all.ok)}%).</li>
+  <li>Duración promedio de cada mentoría: <b>${p1(avg(D))} min</b>. Tiempo total en mentoría: <b>${hm(tot)}</b>.</li>
+  <li>${adv} de ${all.n} reservas (${pct(adv,all.n)}%) se hicieron para otro día, por adelantado. ${mail} personas (${pct(mail,all.n)}%) dejaron su correo.</li></ul>
+  <h2>2. Resultados por día</h2><table><thead><tr><th>Indicador</th>${days.map(x=>`<th class="r">${DAYS[x.d]}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody>
+  ${row(["Reservas",...days.map(x=>x.t.n),all.n])}${row(["Mentorías realizadas",...days.map(x=>x.t.ok),all.ok])}${row(["Canceladas",...days.map(x=>x.t.ca),all.ca])}${row(["No llegó",...days.map(x=>x.t.no),all.no])}${row(["Sin cierre",...days.map(x=>x.t.pend),all.pend])}
+  ${row(["Cupos disponibles (parrilla)",...cap,capAll])}${row(["Ocupación (realizadas / cupos)",...days.map(x=>pct(x.t.ok,x.cap)+"%"),pct(all.ok,capAll)+"%"])}${row(["Asistencia (de las reservas cerradas)",...days.map(x=>pct(x.t.ok,x.t.closed)+"%"),pct(all.ok,all.closed)+"%"])}
+  ${row(["Duración promedio por mentoría",...days.map(x=>p1(x.av)+" min"),p1(avg(D))+" min"])}${row(["Tiempo total de mentoría",...days.map(x=>hm(x.h)),hm(tot)])}</tbody></table>
+  <div class="keep"><h2>3. Mentorías realizadas por hora</h2><table><thead><tr><th>Hora</th><th class="r">Realizadas</th><th></th></tr></thead><tbody>${hrs.map((v,i)=>`<tr><td>${10+i}:00 – ${11+i}:00</td><td class="r"><b>${v}</b></td><td style="width:65%;white-space:normal">${bar(v,mxH,i===pk?"#da291c":"")}</td></tr>`).join("")}</tbody></table></div>
+  <h2>4. Mentorías por temática</h2><table><thead><tr><th>Temática</th>${days.map(x=>`<th class="r">${DAYS[x.d].split(" ")[0].slice(0,3)} ${DAYS[x.d].split(" ")[1]}</th>`).join("")}<th class="r">Realizadas</th><th class="r">%</th><th class="r">Reservas</th><th class="r">Canceladas</th></tr></thead><tbody>
+  ${byC.map(c=>row([esc(c.n),...[0,1,2].map(d=>tally(c.l.filter(b=>b.day===d)).ok),`<b>${c.t.ok}</b>`,pct(c.t.ok,all.ok)+"%",c.t.n,c.t.ca])).join("")}</tbody><tfoot>${row(["Total",...[0,1,2].map(d=>tally(D.filter(b=>b.day===d)).ok),all.ok,"100%",all.n,all.ca])}</tfoot></table>
+  <h2>5. Mentorías por mentor</h2><table><thead><tr><th>Mentor</th><th>Temática</th><th class="r">Realizadas</th><th class="r">Canceladas</th><th class="r">No llegó</th><th class="r">Tiempo</th></tr></thead><tbody>
+  ${ms.map(x=>row([esc(x.name),esc(x.spec),`<b>${x.t.ok}</b>`,x.t.ca,x.t.no,hm(x.h)],2)).join("")}</tbody><tfoot>${row(["Total","",all.ok,all.ca,all.no,hm(tot)],2)}</tfoot></table>
+  <h2>6. Comportamiento del público</h2><ul>
+  <li><b>${pct(adv,all.n)}%</b> de las reservas se hicieron para otro día. Jueves: ${pct(days[0].l.filter(b=>b.advance).length,days[0].t.n)}%, viernes: ${pct(days[1].l.filter(b=>b.advance).length,days[1].t.n)}%, sábado: ${pct(days[2].l.filter(b=>b.advance).length,days[2].t.n)}%.</li>
+  <li><b>${pct(mail,all.n)}%</b> dejó su correo. Jueves: ${pct(days[0].l.filter(b=>b.email).length,days[0].t.n)}%, viernes: ${pct(days[1].l.filter(b=>b.email).length,days[1].t.n)}%, sábado: ${pct(days[2].l.filter(b=>b.email).length,days[2].t.n)}%.</li>
+  <li><b>${multi}</b> personas necesitaron más de un llamado en la pantalla (${pct(multi,all.ok)}% de las mentorías realizadas).</li></ul>
+  <div class="note"><b>Cómo se calculan las cifras.</b> Una mentoría cuenta como realizada cuando su hora ya terminó y no fue cancelada ni marcada como «No llegó». La ocupación usa los cupos de la parrilla vigente. «Sin cierre» son reservas cuya hora aún no termina. Los mentores retirados de la parrilla aparecen agrupados en «Otros».</div>`;
+  return `<!doctype html><html lang="es"><meta charset="utf-8"><title>Metricas Emprende tu Mente 2026</title><style>${css}</style>${body}</html>`;
+}
+function descargarMetricas(){
+  const html=informeMetricas(), w=window.open("","_blank");
+  if(w){w.document.open();w.document.write(html);w.document.close();setTimeout(()=>{try{w.focus();w.print()}catch(_){}},500);return}
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([html],{type:"text/html"}));a.download="Metricas Emprende tu Mente 2026.html";document.body.appendChild(a);a.click();a.remove();
 }
 function planoRows(){
   const f=S.pf,q=f.q.trim().toLowerCase();
@@ -3082,7 +3154,7 @@ tb.addEventListener("submit",async e=>{if(e.target.id!=="pinForm")return;e.preve
   else if(a!==b)S.pinMsg="Los dos PIN no coinciden. Escríbelos de nuevo.";
   else{const r=await act("setPin",{newPin:a});if(r.ok){S.pinValue=a;S.pinMsg="PIN guardado. Avisa el nuevo PIN a los mentores: sus tablets lo pedirán de nuevo."}else S.pinMsg=r.msg}
   document.activeElement&&document.activeElement.blur();renderTablet()},true);
-tb.addEventListener("click",e=>{const k=e.target.closest("[data-ks]");if(k){S.kpiSrc=k.dataset.ks;renderTablet()}});
+tb.addEventListener("click",e=>{if(e.target.closest("[data-dl]")){descargarMetricas();return}const k=e.target.closest("[data-ks]");if(k){S.kpiSrc=k.dataset.ks;renderTablet()}});
 tb.addEventListener("input",e=>{if(e.target.id==="pfQ"){S.pf.q=e.target.value;const r=document.getElementById("planoRows");if(r)r.innerHTML=planoRows()}});
 tb.addEventListener("change",e=>{const id=e.target.id;if(!/^pf/.test(id))return;
   if(id==="pfDay")S.pf.day=e.target.value;if(id==="pfMesa")S.pf.mesa=e.target.value;if(id==="pfAll")S.pf.all=e.target.checked;
